@@ -1,0 +1,75 @@
+name: better-tracker-backend
+
+x-app-environment: &app-environment
+  APP_NAME: "${APP_NAME:-Better Tracker API}"
+  ENVIRONMENT: "${ENVIRONMENT:-development}"
+  DATABASE_URL: "${COMPOSE_DATABASE_URL:-cockroachdb+asyncpg://root@db:26257/tracker}"
+  DATABASE_ECHO: "${DATABASE_ECHO:-false}"
+  CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000"]}'
+
+services:
+  db:
+    image: cockroachdb/cockroach:v26.2.3
+    command:
+      - start-single-node
+      - --insecure
+      - --listen-addr=:26257
+      - --http-addr=:8080
+      - --advertise-addr=db:26257
+      - --store=/cockroach/cockroach-data
+    ports:
+      - "127.0.0.1:26257:26257"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - cockroach-data:/cockroach/cockroach-data
+    healthcheck:
+      test:
+        - CMD
+        - /cockroach/cockroach
+        - sql
+        - --insecure
+        - --host=localhost:26257
+        - --execute=SELECT 1;
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 60s
+
+  db-init:
+    image: cockroachdb/cockroach:v26.2.3
+    command:
+      - sql
+      - --insecure
+      - --host=db:26257
+      - --execute=CREATE DATABASE IF NOT EXISTS tracker;
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-environment
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment: *app-environment
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  cockroach-data:

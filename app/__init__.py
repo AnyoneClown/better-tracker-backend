@@ -1,0 +1,1 @@
+"""Better Tracker backend application."""

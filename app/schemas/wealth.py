@@ -1,15 +1,16 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Self
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.wealth import AccountType
+from app.models.wealth import AccountType, SavingsContributionKind
 from app.schemas.common import EntityResponse
 
 
 class CurrencyModel(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     currency: str = Field(
         default="USD",
@@ -40,7 +41,7 @@ class FinancialAccountCreate(CurrencyModel):
 
 
 class FinancialAccountUpdate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     account_type: AccountType | None = None
@@ -101,6 +102,13 @@ class FinancialAccountResponse(EntityResponse):
     is_savings: bool
 
 
+class FinancialAccountListResponse(BaseModel):
+    items: list[FinancialAccountResponse]
+    total: int
+    offset: int
+    limit: int
+
+
 class SavingsGoalCreate(CurrencyModel):
     name: str = Field(min_length=1, max_length=120)
     target_amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
@@ -115,18 +123,12 @@ class SavingsGoalCreate(CurrencyModel):
 
 
 class SavingsGoalUpdate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     target_amount: Decimal | None = Field(
         default=None,
         gt=0,
-        max_digits=18,
-        decimal_places=2,
-    )
-    current_amount: Decimal | None = Field(
-        default=None,
-        ge=0,
         max_digits=18,
         decimal_places=2,
     )
@@ -150,7 +152,7 @@ class SavingsGoalUpdate(BaseModel):
     def validate_patch(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("at least one field must be provided")
-        required_fields = {"name", "target_amount", "current_amount", "currency"}
+        required_fields = {"name", "target_amount", "currency"}
         null_fields = {
             field
             for field in required_fields & self.model_fields_set
@@ -172,19 +174,75 @@ class SavingsGoalResponse(EntityResponse):
     progress_percent: Decimal
 
 
-class NetWorthSnapshotCapture(CurrencyModel):
-    recorded_at: datetime | None = None
+class SavingsGoalListResponse(BaseModel):
+    items: list[SavingsGoalResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class SavingsContributionCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    kind: SavingsContributionKind = SavingsContributionKind.CONTRIBUTION
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+    occurred_on: date
     notes: str | None = Field(default=None, max_length=500)
 
-    @field_validator("recorded_at")
-    @classmethod
-    def recorded_at_must_have_timezone(
-        cls,
-        value: datetime | None,
-    ) -> datetime | None:
-        if value is not None and value.utcoffset() is None:
-            raise ValueError("recorded_at must include a timezone offset")
-        return value
+
+class SavingsContributionUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    kind: SavingsContributionKind | None = None
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=18,
+        decimal_places=2,
+    )
+    occurred_on: date | None = None
+    notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_patch(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("at least one field must be provided")
+        required_fields = {"kind", "amount", "occurred_on"}
+        null_fields = {
+            field
+            for field in required_fields & self.model_fields_set
+            if getattr(self, field) is None
+        }
+        if null_fields:
+            fields = ", ".join(sorted(null_fields))
+            raise ValueError(f"fields cannot be null: {fields}")
+        return self
+
+
+class SavingsContributionResponse(EntityResponse):
+    goal_id: UUID
+    kind: SavingsContributionKind
+    amount: Decimal
+    signed_amount: Decimal
+    occurred_on: date
+    notes: str | None
+
+
+class SavingsContributionListResponse(BaseModel):
+    items: list[SavingsContributionResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class SavingsContributionMutationResponse(BaseModel):
+    contribution: SavingsContributionResponse
+    goal_current_amount: Decimal
+    goal_progress_percent: Decimal
+
+
+class NetWorthSnapshotCapture(CurrencyModel):
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class NetWorthSnapshotResponse(EntityResponse):
@@ -194,6 +252,13 @@ class NetWorthSnapshotResponse(EntityResponse):
     net_worth: Decimal
     currency: str
     notes: str | None
+
+
+class NetWorthSnapshotListResponse(BaseModel):
+    items: list[NetWorthSnapshotResponse]
+    total: int
+    offset: int
+    limit: int
 
 
 class WealthSummary(BaseModel):

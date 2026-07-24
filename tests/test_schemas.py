@@ -5,8 +5,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.wealth import AccountType, NetWorthSnapshot, SavingsGoal
+from app.schemas.finance import FinancialTransactionCreate
 from app.schemas.health import NutritionLogCreate, WeightEntryCreate, WeightEntryUpdate
 from app.schemas.wealth import FinancialAccountCreate, FinancialAccountUpdate
+from app.schemas.workout import WorkoutSetCreate
 
 
 def test_currency_is_normalized_and_savings_account_is_validated() -> None:
@@ -80,3 +82,16 @@ def test_patch_schemas_reject_empty_payloads_and_null_required_fields() -> None:
 
     with pytest.raises(ValidationError):
         WeightEntryUpdate(weight_kg=None)
+
+
+def test_normalized_labels_are_length_checked_after_casefolding() -> None:
+    with pytest.raises(ValidationError):
+        FinancialTransactionCreate(
+            kind="expense",
+            amount="1.00",
+            category="ß" * 100,
+            occurred_on=date(2026, 7, 24),
+        )
+
+    with pytest.raises(ValidationError):
+        WorkoutSetCreate(exercise="ß" * 200, set_number=1, reps=1)

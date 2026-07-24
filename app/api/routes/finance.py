@@ -50,6 +50,10 @@ def _sqlstate(error: BaseException) -> str | None:
     return None
 
 
+def _normalize_category(category: str) -> str:
+    return " ".join(category.split()).casefold()
+
+
 async def _commit(session: SessionDep, *, conflict_detail: str) -> None:
     try:
         await session.commit()
@@ -206,7 +210,7 @@ async def list_transactions(
 ) -> FinancialTransactionListResponse:
     if start_date is not None and end_date is not None and start_date > end_date:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="start_date must be on or before end_date",
         )
 
@@ -214,7 +218,7 @@ async def list_transactions(
     if kind is not None:
         filters.append(FinancialTransaction.kind == kind)
     if category is not None:
-        filters.append(FinancialTransaction.category == category.strip())
+        filters.append(FinancialTransaction.category == _normalize_category(category))
     if currency is not None:
         filters.append(FinancialTransaction.currency == currency.upper())
     if start_date is not None:
@@ -231,6 +235,7 @@ async def list_transactions(
                 query.order_by(
                     FinancialTransaction.occurred_on.desc(),
                     FinancialTransaction.created_at.desc(),
+                    FinancialTransaction.id.desc(),
                 )
                 .offset(offset)
                 .limit(limit)
@@ -335,7 +340,7 @@ async def list_budgets(
     if month is not None:
         filters.append(MonthlyBudget.month == month)
     if category is not None:
-        filters.append(MonthlyBudget.category == category.strip())
+        filters.append(MonthlyBudget.category == _normalize_category(category))
     if currency is not None:
         filters.append(MonthlyBudget.currency == currency.upper())
 
@@ -347,6 +352,8 @@ async def list_budgets(
                     MonthlyBudget.year.desc(),
                     MonthlyBudget.month.desc(),
                     MonthlyBudget.category,
+                    MonthlyBudget.currency,
+                    MonthlyBudget.id,
                 )
                 .offset(offset)
                 .limit(limit)

@@ -11,9 +11,11 @@ from app.models.health import NutritionLog, WeightEntry
 from app.schemas.health import (
     HealthSummary,
     NutritionLogCreate,
+    NutritionLogListResponse,
     NutritionLogResponse,
     NutritionLogUpdate,
     WeightEntryCreate,
+    WeightEntryListResponse,
     WeightEntryResponse,
     WeightEntryUpdate,
 )
@@ -82,24 +84,37 @@ async def create_weight_entry(
     return entry
 
 
-@router.get("/weights", response_model=list[WeightEntryResponse])
+@router.get("/weights", response_model=WeightEntryListResponse)
 async def list_weight_entries(
     session: SessionDep,
     start_date: date | None = None,
     end_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-) -> list[WeightEntry]:
+) -> WeightEntryListResponse:
     validate_date_range(start_date, end_date)
-    statement = select(WeightEntry)
+    filters = []
     if start_date is not None:
-        statement = statement.where(WeightEntry.recorded_on >= start_date)
+        filters.append(WeightEntry.recorded_on >= start_date)
     if end_date is not None:
-        statement = statement.where(WeightEntry.recorded_on <= end_date)
+        filters.append(WeightEntry.recorded_on <= end_date)
     statement = (
-        statement.order_by(WeightEntry.recorded_on.desc()).limit(limit).offset(offset)
+        select(WeightEntry)
+        .where(*filters)
+        .order_by(WeightEntry.recorded_on.desc(), WeightEntry.id.desc())
+        .limit(limit)
+        .offset(offset)
     )
-    return list((await session.scalars(statement)).all())
+    entries = list((await session.scalars(statement)).all())
+    total = await session.scalar(
+        select(func.count()).select_from(WeightEntry).where(*filters)
+    )
+    return WeightEntryListResponse(
+        items=[WeightEntryResponse.model_validate(entry) for entry in entries],
+        total=total or 0,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("/weights/{entry_id}", response_model=WeightEntryResponse)
@@ -155,24 +170,37 @@ async def create_nutrition_log(
     return log
 
 
-@router.get("/nutrition", response_model=list[NutritionLogResponse])
+@router.get("/nutrition", response_model=NutritionLogListResponse)
 async def list_nutrition_logs(
     session: SessionDep,
     start_date: date | None = None,
     end_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-) -> list[NutritionLog]:
+) -> NutritionLogListResponse:
     validate_date_range(start_date, end_date)
-    statement = select(NutritionLog)
+    filters = []
     if start_date is not None:
-        statement = statement.where(NutritionLog.recorded_on >= start_date)
+        filters.append(NutritionLog.recorded_on >= start_date)
     if end_date is not None:
-        statement = statement.where(NutritionLog.recorded_on <= end_date)
+        filters.append(NutritionLog.recorded_on <= end_date)
     statement = (
-        statement.order_by(NutritionLog.recorded_on.desc()).limit(limit).offset(offset)
+        select(NutritionLog)
+        .where(*filters)
+        .order_by(NutritionLog.recorded_on.desc(), NutritionLog.id.desc())
+        .limit(limit)
+        .offset(offset)
     )
-    return list((await session.scalars(statement)).all())
+    logs = list((await session.scalars(statement)).all())
+    total = await session.scalar(
+        select(func.count()).select_from(NutritionLog).where(*filters)
+    )
+    return NutritionLogListResponse(
+        items=[NutritionLogResponse.model_validate(log) for log in logs],
+        total=total or 0,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("/nutrition/{log_id}", response_model=NutritionLogResponse)

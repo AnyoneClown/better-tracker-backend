@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
@@ -8,11 +9,13 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    ForeignKey,
+    Index,
     Numeric,
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -20,6 +23,11 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 class AccountType(StrEnum):
     ASSET = "asset"
     LIABILITY = "liability"
+
+
+class SavingsContributionKind(StrEnum):
+    CONTRIBUTION = "contribution"
+    WITHDRAWAL = "withdrawal"
 
 
 class FinancialAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -80,11 +88,59 @@ class SavingsGoal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    contributions: Mapped[list["SavingsContribution"]] = relationship(
+        back_populates="goal",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by=lambda: (
+            SavingsContribution.occurred_on.desc(),
+            SavingsContribution.created_at.desc(),
+        ),
+    )
+
     @property
     def progress_percent(self) -> Decimal:
         return (self.current_amount / self.target_amount * 100).quantize(
             Decimal("0.01")
         )
+
+
+class SavingsContribution(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "savings_contributions"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="amount_positive"),
+        Index(
+            "ix_savings_contributions_goal_occurred_on",
+            "goal_id",
+            "occurred_on",
+        ),
+    )
+
+    goal_id: Mapped[UUID] = mapped_column(
+        ForeignKey("savings_goals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[SavingsContributionKind] = mapped_column(
+        Enum(
+            SavingsContributionKind,
+            name="savings_contribution_kind",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        nullable=False,
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    occurred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    goal: Mapped[SavingsGoal] = relationship(back_populates="contributions")
+
+    @property
+    def signed_amount(self) -> Decimal:
+        if self.kind == SavingsContributionKind.CONTRIBUTION:
+            return self.amount
+        return -self.amount
 
 
 class NetWorthSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):

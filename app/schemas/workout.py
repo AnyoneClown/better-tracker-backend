@@ -10,7 +10,7 @@ from app.schemas.common import EntityResponse
 
 
 class WorkoutSetBase(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     exercise: str = Field(min_length=1, max_length=200)
     set_number: int = Field(ge=1)
@@ -23,6 +23,11 @@ class WorkoutSetBase(BaseModel):
     )
     duration_seconds: int | None = Field(default=None, ge=0)
     notes: str | None = None
+
+    @field_validator("exercise", mode="before")
+    @classmethod
+    def normalize_exercise(cls, value: str) -> str:
+        return " ".join(value.split()).casefold()
 
     @model_validator(mode="after")
     def require_metric(self) -> WorkoutSetBase:
@@ -48,7 +53,7 @@ class WorkoutSetRead(WorkoutSetBase, EntityResponse):
 
 
 class WorkoutBase(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str = Field(min_length=1, max_length=200)
     performed_at: datetime
@@ -73,7 +78,7 @@ class WorkoutCreate(WorkoutBase):
 
 
 class WorkoutUpdate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     performed_at: datetime | None = None
@@ -90,6 +95,8 @@ class WorkoutUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_update(self) -> WorkoutUpdate:
+        if not self.model_fields_set:
+            raise ValueError("at least one field must be provided")
         for field_name in ("name", "performed_at"):
             if (
                 field_name in self.model_fields_set
@@ -112,6 +119,29 @@ class WorkoutListResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class WorkoutExerciseSummary(BaseModel):
+    exercise: str
+    sets: int
+    total_reps: int
+    volume_kg: Decimal
+    distance_km: Decimal
+    duration_seconds: int
+
+
+class WorkoutSummary(BaseModel):
+    date_from: datetime | None
+    date_to: datetime | None
+    workout_count: int
+    total_duration_minutes: int
+    average_duration_minutes: Decimal | None
+    total_sets: int
+    total_reps: int
+    total_volume_kg: Decimal
+    total_distance_km: Decimal
+    total_set_duration_seconds: int
+    exercises: list[WorkoutExerciseSummary]
 
 
 def _validate_unique_sets(workout_sets: list[WorkoutSetCreate]) -> None:

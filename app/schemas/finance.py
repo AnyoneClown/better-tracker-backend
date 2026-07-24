@@ -9,12 +9,19 @@ from app.schemas.common import EntityResponse
 
 
 class FinanceInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     @field_validator("currency", check_fields=False)
     @classmethod
     def normalize_currency(cls, value: str | None) -> str | None:
         return value.upper() if value is not None else None
+
+    @field_validator("category", check_fields=False, mode="before")
+    @classmethod
+    def normalize_category(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return " ".join(value.split()).casefold()
 
 
 class FinancialTransactionCreate(FinanceInput):

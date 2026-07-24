@@ -2,12 +2,14 @@ from datetime import date
 from decimal import Decimal
 from typing import Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.common import EntityResponse
 
 
 class WeightEntryCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     recorded_on: date
     weight_kg: Decimal = Field(gt=0, max_digits=6, decimal_places=2)
     body_fat_percent: Decimal | None = Field(
@@ -21,6 +23,8 @@ class WeightEntryCreate(BaseModel):
 
 
 class WeightEntryUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     recorded_on: date | None = None
     weight_kg: Decimal | None = Field(
         default=None,
@@ -59,7 +63,16 @@ class WeightEntryResponse(EntityResponse):
     notes: str | None
 
 
+class WeightEntryListResponse(BaseModel):
+    items: list[WeightEntryResponse]
+    total: int
+    offset: int
+    limit: int
+
+
 class NutritionLogCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     recorded_on: date
     calories: int = Field(ge=0)
     calorie_target: int | None = Field(default=None, gt=0)
@@ -85,6 +98,8 @@ class NutritionLogCreate(BaseModel):
 
 
 class NutritionLogUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     recorded_on: date | None = None
     calories: int | None = Field(default=None, ge=0)
     calorie_target: int | None = Field(default=None, gt=0)
@@ -131,6 +146,13 @@ class NutritionLogResponse(EntityResponse):
     carbs_grams: Decimal | None
     fat_grams: Decimal | None
     notes: str | None
+
+
+class NutritionLogListResponse(BaseModel):
+    items: list[NutritionLogResponse]
+    total: int
+    offset: int
+    limit: int
 
 
 class HealthSummary(BaseModel):

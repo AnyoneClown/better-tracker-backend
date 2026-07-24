@@ -48,6 +48,13 @@ migrations, and starts the API. Once the `migrate` service has completed:
 - CockroachDB SQL: `localhost:26257`
 - CockroachDB console: <http://localhost:8080>
 
+The API container has a readiness healthcheck, so scripts can wait for the whole
+stack:
+
+```bash
+docker compose up -d --build --wait
+```
+
 Useful lifecycle commands:
 
 ```bash
@@ -138,6 +145,10 @@ complete request and response schemas.
 ### Workouts
 
 - `POST /api/v1/workouts` — create a workout and nested sets.
+- `GET /api/v1/workouts/summary` — aggregate workouts, active minutes, sets,
+  reps, weight volume, distance, and timed-set duration, including an
+  exercise breakdown. Optional `date_from` and `date_to` filters must include
+  timezone offsets.
 - `GET /api/v1/workouts` — list with `date_from`, `date_to`, `offset`, and
   `limit` filters. Date-time filters must include a timezone offset.
 - `GET|PATCH|DELETE /api/v1/workouts/{workout_id}` — read, update, or delete a
@@ -159,6 +170,10 @@ complete request and response schemas.
 - `GET|PATCH|DELETE /api/v1/finance/budgets/{budget_id}` — budget detail and
   mutations.
 
+Categories are stored as normalized lowercase values with repeated whitespace
+collapsed. This keeps transaction filters and category budgets aligned when a
+caller sends variants such as `Food`, `food`, or ` food `.
+
 ### Wealth, savings, and net worth
 
 - `GET /api/v1/wealth/summary?currency=USD` — assets, liabilities, net worth,
@@ -170,11 +185,23 @@ complete request and response schemas.
 - `POST|GET /api/v1/wealth/savings-goals` — create or list goals; filter by
   `currency`, `offset`, and `limit`.
 - `GET|PATCH|DELETE /api/v1/wealth/savings-goals/{goal_id}` — goal detail and
-  mutations.
+  metadata mutations. `current_amount` can be set when a goal is created and
+  is then changed through contribution history, rather than overwritten by a
+  generic PATCH.
+- `POST|GET /api/v1/wealth/savings-goals/{goal_id}/contributions` — record or
+  list dated contributions and withdrawals. Mutations update the goal balance
+  in the same database transaction and reject withdrawals that would make it
+  negative.
+- `GET|PATCH|DELETE /api/v1/wealth/savings-contributions/{contribution_id}` —
+  contribution detail and mutations; edits and deletion adjust the goal
+  balance atomically.
 - `POST /api/v1/wealth/net-worth-snapshots/capture` — capture current account
-  totals as a snapshot.
+  totals with a server-generated current timestamp. Backdated timestamps are
+  deliberately rejected because the API does not retain historical account
+  balances from which to reconstruct them.
 - `GET /api/v1/wealth/net-worth-snapshots` — list snapshots with `currency`,
   `offset`, and `limit` filters.
+- `GET /api/v1/wealth/net-worth-snapshots/{snapshot_id}` — snapshot detail.
 - `DELETE /api/v1/wealth/net-worth-snapshots/{snapshot_id}` — delete a snapshot.
 
 ### Weight and nutrition
@@ -192,6 +219,9 @@ complete request and response schemas.
 
 Collection limits are capped at 100. PATCH requests change only supplied fields,
 apart from the documented workout-set replacement behavior.
+
+Every collection response uses an `{items, total, offset, limit}` envelope so a
+frontend can paginate without a second counting request.
 
 ## Example curl workflow
 
@@ -253,6 +283,12 @@ uv run ruff check .
 uv run mypy app
 ```
 
+GitHub Actions runs Ruff linting/format validation and the default pytest suite
+on pushes to `main`, pull requests, and manual workflow dispatches. The fast
+default API tests use a disposable async SQLite database; the guarded
+integration suite below remains the source of truth for CockroachDB migrations,
+constraints, and dialect behavior.
+
 The default suite skips the destructive integration smoke test. With the
 Compose database running, execute it against its guarded, disposable
 `tracker_test` database:
@@ -288,3 +324,10 @@ wrapper. Before production, add bounded retries with jitter around idempotent
 units of work, using a fresh async session for each attempt and keeping external
 side effects outside the retried callback. Do not blindly retry ambiguous commit
 errors (`40003`) without an idempotency strategy.
+
+Financial transactions, account balances, and savings goals are intentionally
+separate ledgers in this MVP. Recording income or an expense does not silently
+change an account balance; update the relevant account explicitly. Nutrition is
+stored as one aggregate per day rather than individual meals, and summaries are
+always calculated within one requested currency because no exchange-rate source
+is configured.

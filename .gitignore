@@ -8,14 +8,31 @@ venv/
 
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
+.hypothesis/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.tox/
+.nox/
 
 build/
 dist/
 *.egg-info/
+
+*.log
+*.pid
+*.db
+*.sqlite
+*.sqlite3
+
+.direnv/
+.envrc
+.idea/
+.vscode/
+*.swp
+*.swo
 
 .env
 .env.*

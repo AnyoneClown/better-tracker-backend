@@ -26,6 +26,10 @@ def test_openapi_exposes_each_tracker_domain() -> None:
         "/api/v1/finance/transactions",
         "/api/v1/finance/budgets",
         "/api/v1/finance/summary",
+        "/api/v1/finance/currencies",
+        "/api/v1/integrations/monobank/connection",
+        "/api/v1/integrations/monobank/sync",
+        "/api/v1/integrations/monobank/accounts/{account_id}/transactions",
         "/api/v1/wealth/accounts",
         "/api/v1/wealth/savings-goals",
         "/api/v1/wealth/net-worth-snapshots/capture",
@@ -42,6 +46,7 @@ def test_openapi_exposes_each_tracker_domain() -> None:
         "/api/v1/finance",
         "/api/v1/wealth",
         "/api/v1/health",
+        "/api/v1/integrations",
     )
     for path, operations in paths.items():
         if not path.startswith(protected_prefixes):

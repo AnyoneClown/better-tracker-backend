@@ -1,9 +1,11 @@
 from functools import lru_cache
 
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEVELOPMENT_JWT_SECRET = "development-only-secret-change-before-running-in-production"
+DEVELOPMENT_MONOBANK_ENCRYPTION_KEY = "YmV0dGVyLXRyYWNrZXItbW9ub2JhbmstZGV2LWtleSE="
 
 
 class Settings(BaseSettings):
@@ -25,16 +27,34 @@ class Settings(BaseSettings):
     jwt_issuer: str = Field(default="better-tracker-api", min_length=1)
     jwt_audience: str = Field(default="better-tracker-api", min_length=1)
     access_token_expire_minutes: int = Field(default=30, ge=1, le=1440)
+    monobank_token_encryption_key: SecretStr = SecretStr(
+        DEVELOPMENT_MONOBANK_ENCRYPTION_KEY
+    )
 
     @model_validator(mode="after")
-    def require_production_jwt_secret(self) -> "Settings":
-        if (
-            self.environment.casefold() not in {"development", "test"}
-            and self.jwt_secret_key.get_secret_value() == DEVELOPMENT_JWT_SECRET
-        ):
+    def require_production_secrets(self) -> "Settings":
+        production_like = self.environment.casefold() not in {"development", "test"}
+        if production_like:
+            if self.jwt_secret_key.get_secret_value() == DEVELOPMENT_JWT_SECRET:
+                raise ValueError(
+                    "JWT_SECRET_KEY must be changed outside development and test"
+                )
+            if (
+                self.monobank_token_encryption_key.get_secret_value()
+                == DEVELOPMENT_MONOBANK_ENCRYPTION_KEY
+            ):
+                raise ValueError(
+                    "MONOBANK_TOKEN_ENCRYPTION_KEY must be changed outside "
+                    "development and test"
+                )
+
+        key = self.monobank_token_encryption_key.get_secret_value()
+        try:
+            Fernet(key.encode("ascii"))
+        except (UnicodeEncodeError, ValueError) as exc:
             raise ValueError(
-                "JWT_SECRET_KEY must be changed outside development and test"
-            )
+                "MONOBANK_TOKEN_ENCRYPTION_KEY must be a Fernet key"
+            ) from exc
         return self
 
 

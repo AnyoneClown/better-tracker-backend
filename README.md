@@ -155,6 +155,18 @@ Settings are read from environment variables and, for local commands, `.env`.
 | `JWT_ISSUER` | `better-tracker-api` | Required JWT issuer claim. |
 | `JWT_AUDIENCE` | `better-tracker-api` | Required JWT audience claim. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access-token lifetime, from 1 minute to 24 hours. |
+| `MONOBANK_TOKEN_ENCRYPTION_KEY` | Development-only value | Fernet key used only to encrypt Monobank Personal API tokens at rest. Generate a distinct production key and keep it in secret storage. |
+
+Generate a production Fernet key after installing the project, then store the
+output as `MONOBANK_TOKEN_ENCRYPTION_KEY`:
+
+```bash
+uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+```
+
+Changing or losing this key makes existing Monobank connections unreadable;
+users must reconnect. The checked-in value is for local development only and is
+rejected when `ENVIRONMENT` is neither `development` nor `test`.
 
 ## API overview
 
@@ -214,6 +226,51 @@ by that token's user; another user's resource identifier returns `404 Not Found`
 Categories are stored as normalized lowercase values with repeated whitespace
 collapsed. This keeps transaction filters and category budgets aligned when a
 caller sends variants such as `Food`, `food`, or ` food `.
+
+Pending Monobank operations and transactions explicitly excluded by a user stay
+visible in the ledger but do not contribute to cash-flow summaries. Manual
+transactions remain fully editable and deletable. Imported Monobank rows only
+allow category and summary-exclusion changes; their bank-supplied fields are
+read-only. Users can bulk-delete every imported row for one connected card;
+manual rows and other cards are unaffected, and a later sync can import the
+deleted provider rows again.
+
+### Monobank Personal API
+
+- `POST /api/v1/integrations/monobank/connection` — validate a personal token,
+  encrypt it with Fernet, and store the current client, card, and jar state.
+- `GET /api/v1/integrations/monobank/connection` — return connection status,
+  progress, cards, and jars. The token and ciphertext are never returned.
+- `DELETE /api/v1/integrations/monobank/connection` — delete credentials and
+  live card/jar state while retaining previously imported transactions.
+- `POST /api/v1/integrations/monobank/sync` — start a background import and
+  return `202 Accepted`. An optional `date_from`/`date_to` JSON body selects an
+  inclusive historical period; without it, the latest 31 calendar days are used.
+  A second active sync returns `409 Conflict`.
+- `DELETE /api/v1/integrations/monobank/accounts/{account_id}/transactions` —
+  delete only that authenticated user's imported transactions for one connected
+  card. Deletion is rejected while a sync is active.
+- `GET /api/v1/finance/currencies` — list currencies found in the authenticated
+  user's manual and imported money data, with UAH first when present.
+
+Sync refreshes `client-info`, then imports the selected inclusive period from
+each personal card. Periods longer than 31 calendar days are split into safe
+statement batches. Jar statements and `managedClients` are deliberately
+ignored. Every statement request runs sequentially with a 61-second delay to
+respect Monobank's rate limit, and progress is committed after each batch.
+Repeated syncs upsert the provider transaction ID, refresh pending/provider
+fields, and retain category overrides and exclusions. Positive card balances
+and jars contribute to assets, negative card balances contribute to liabilities
+by absolute value, and credit limits are display-only. Jars contribute to
+savings but remain separate from local Savings Goals.
+
+This Personal API integration is intended only for a self-hosted instance used
+by its owner or family, as described in the
+[Monobank Personal API terms](https://api.monobank.ua/docs/index.html). Stop and
+use Monobank's Provider API before offering Better Tracker to unrelated users.
+The v1 background task assumes one Uvicorn worker; multi-worker or scale-out
+deployments need a durable external job queue. Sync is manual—there is no
+scheduler or webhook.
 
 ### Wealth, savings, and net worth
 
@@ -376,8 +433,10 @@ only.
 
 For production, use a secure CockroachDB deployment or CockroachDB Cloud, a
 least-privileged SQL user, certificate-verified TLS, secret-managed connection
-credentials, a strong secret-managed `JWT_SECRET_KEY`, HTTPS, and restricted
-CORS origins. Replace the local URL with the secure
+credentials, strong and distinct secret-managed `JWT_SECRET_KEY` and
+`MONOBANK_TOKEN_ENCRYPTION_KEY` values, HTTPS for both frontend and API, and
+restricted CORS origins. HTTPS is required before sending a personal Monobank
+token outside local development. Replace the local URL with the secure
 `cockroachdb+asyncpg://` connection details for that cluster.
 
 The SQLAlchemy engine uses CockroachDB's `SERIALIZABLE` isolation. Under write

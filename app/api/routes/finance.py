@@ -9,7 +9,14 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
-from app.models.finance import FinancialTransaction, MonthlyBudget, TransactionKind
+from app.models.finance import (
+    FinancialTransaction,
+    MonthlyBudget,
+    TransactionKind,
+    TransactionSource,
+)
+from app.models.monobank import MonobankAccount, MonobankJar
+from app.models.wealth import FinancialAccount, SavingsGoal
 from app.schemas.finance import (
     FinanceCategorySummary,
     FinanceSummaryResponse,
@@ -129,6 +136,8 @@ async def get_finance_summary(
                 FinancialTransaction.currency == currency,
                 FinancialTransaction.occurred_on >= period_start,
                 FinancialTransaction.occurred_on <= period_end,
+                FinancialTransaction.hold.is_(False),
+                FinancialTransaction.excluded_from_summary.is_(False),
             )
             .group_by(FinancialTransaction.category, FinancialTransaction.kind)
         )
@@ -218,6 +227,7 @@ async def list_transactions(
     session: SessionDep,
     current_user: CurrentUserDep,
     kind: TransactionKind | None = None,
+    source: TransactionSource | None = None,
     category: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
     currency: Annotated[
         str | None,
@@ -237,6 +247,8 @@ async def list_transactions(
     filters = [FinancialTransaction.user_id == current_user.id]
     if kind is not None:
         filters.append(FinancialTransaction.kind == kind)
+    if source is not None:
+        filters.append(FinancialTransaction.source == source)
     if category is not None:
         filters.append(FinancialTransaction.category == _normalize_category(category))
     if currency is not None:
@@ -254,6 +266,7 @@ async def list_transactions(
             await session.execute(
                 query.order_by(
                     FinancialTransaction.occurred_on.desc(),
+                    FinancialTransaction.occurred_at.desc().nulls_last(),
                     FinancialTransaction.created_at.desc(),
                     FinancialTransaction.id.desc(),
                 )
@@ -309,8 +322,25 @@ async def update_transaction(
         session,
         current_user.id,
     )
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(transaction, field, value)
+    changes = payload.model_dump(exclude_unset=True)
+    if transaction.source == TransactionSource.MONOBANK:
+        allowed_fields = {"category", "excluded_from_summary"}
+        immutable_fields = set(changes) - allowed_fields
+        if immutable_fields:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Monobank transactions only allow category and exclusion changes"
+                ),
+            )
+        if "category" in changes:
+            transaction.category_override = changes["category"]
+            transaction.category = changes["category"]
+        if "excluded_from_summary" in changes:
+            transaction.excluded_from_summary = changes["excluded_from_summary"]
+    else:
+        for field, value in changes.items():
+            setattr(transaction, field, value)
 
     await _commit(session, conflict_detail="Financial transaction already exists")
     await session.refresh(transaction)
@@ -332,9 +362,39 @@ async def delete_transaction(
         session,
         current_user.id,
     )
+    if transaction.source == TransactionSource.MONOBANK:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Monobank transactions cannot be deleted",
+        )
     await session.delete(transaction)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/currencies", response_model=list[str])
+async def list_finance_currencies(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> list[str]:
+    model_columns = (
+        (FinancialTransaction, FinancialTransaction.currency),
+        (MonthlyBudget, MonthlyBudget.currency),
+        (FinancialAccount, FinancialAccount.currency),
+        (SavingsGoal, SavingsGoal.currency),
+        (MonobankAccount, MonobankAccount.currency),
+        (MonobankJar, MonobankJar.currency),
+    )
+    currencies: set[str] = set()
+    for model, column in model_columns:
+        currencies.update(
+            (
+                await session.scalars(
+                    select(column).where(model.user_id == current_user.id).distinct()
+                )
+            ).all()
+        )
+    return sorted(currencies, key=lambda currency: (currency != "UAH", currency))
 
 
 @router.post(

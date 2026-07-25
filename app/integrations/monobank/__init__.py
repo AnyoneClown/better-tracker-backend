@@ -1,0 +1,1 @@
+"""Monobank Personal API integration."""

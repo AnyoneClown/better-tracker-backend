@@ -1,5 +1,6 @@
 from app.models.finance import FinancialTransaction, MonthlyBudget
 from app.models.health import NutritionLog, WeightEntry
+from app.models.monobank import MonobankAccount, MonobankConnection, MonobankJar
 from app.models.user import User
 from app.models.wealth import (
     FinancialAccount,
@@ -13,6 +14,9 @@ __all__ = [
     "FinancialAccount",
     "FinancialTransaction",
     "MonthlyBudget",
+    "MonobankAccount",
+    "MonobankConnection",
+    "MonobankJar",
     "NetWorthSnapshot",
     "NutritionLog",
     "SavingsGoal",

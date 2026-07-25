@@ -10,6 +10,7 @@ x-app-environment: &app-environment
   JWT_ISSUER: "${JWT_ISSUER:-better-tracker-api}"
   JWT_AUDIENCE: "${JWT_AUDIENCE:-better-tracker-api}"
   ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-30}"
+  MONOBANK_TOKEN_ENCRYPTION_KEY: "${MONOBANK_TOKEN_ENCRYPTION_KEY:-YmV0dGVyLXRyYWNrZXItbW9ub2JhbmstZGV2LWtleSE=}"
 
 services:
   db:

@@ -1,10 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.finance import TransactionKind
+from app.models.finance import TransactionKind, TransactionSource
 from app.schemas.common import EntityResponse
 
 
@@ -33,6 +33,7 @@ class FinancialTransactionCreate(FinanceInput):
         default="USD", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$"
     )
     description: str | None = Field(default=None, max_length=500)
+    excluded_from_summary: bool = False
 
 
 class FinancialTransactionUpdate(FinanceInput):
@@ -52,13 +53,21 @@ class FinancialTransactionUpdate(FinanceInput):
         pattern=r"^[A-Za-z]{3}$",
     )
     description: str | None = Field(default=None, max_length=500)
+    excluded_from_summary: bool | None = None
 
     @model_validator(mode="after")
     def validate_patch(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("at least one field must be provided")
 
-        non_nullable = {"kind", "amount", "category", "occurred_on", "currency"}
+        non_nullable = {
+            "kind",
+            "amount",
+            "category",
+            "occurred_on",
+            "currency",
+            "excluded_from_summary",
+        }
         null_fields = {
             field
             for field in non_nullable & self.model_fields_set
@@ -77,6 +86,16 @@ class FinancialTransactionResponse(EntityResponse):
     occurred_on: date
     currency: str
     description: str | None
+    source: TransactionSource
+    external_account_id: str | None
+    external_transaction_id: str | None
+    occurred_at: datetime | None
+    mcc: int | None
+    hold: bool
+    mapped_category: str | None
+    category_override: str | None
+    excluded_from_summary: bool
+    provider_metadata: dict[str, Any] | None
 
 
 class FinancialTransactionListResponse(BaseModel):

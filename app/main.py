@@ -6,13 +6,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.db.session import engine
+from app.db.session import async_session_factory, engine
+from app.integrations.monobank.service import (
+    cancel_all_monobank_syncs,
+    mark_interrupted_monobank_syncs,
+)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    yield
-    await engine.dispose()
+    await mark_interrupted_monobank_syncs(async_session_factory)
+    try:
+        yield
+    finally:
+        await cancel_all_monobank_syncs()
+        await engine.dispose()
 
 
 app = FastAPI(

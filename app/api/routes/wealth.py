@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
+from app.models.monobank import MonobankAccount, MonobankJar
 from app.models.wealth import (
     AccountType,
     FinancialAccount,
@@ -585,6 +586,36 @@ async def calculate_summary(
     assets = totals.get(AccountType.ASSET, Decimal("0"))
     liabilities = totals.get(AccountType.LIABILITY, Decimal("0"))
 
+    monobank_balances = list(
+        (
+            await session.scalars(
+                select(MonobankAccount.balance).where(
+                    MonobankAccount.user_id == user_id,
+                    MonobankAccount.currency == currency,
+                )
+            )
+        ).all()
+    )
+    jar_balances = list(
+        (
+            await session.scalars(
+                select(MonobankJar.balance).where(
+                    MonobankJar.user_id == user_id,
+                    MonobankJar.currency == currency,
+                )
+            )
+        ).all()
+    )
+    assets += sum(
+        (Decimal(str(balance)) for balance in monobank_balances if balance > 0),
+        Decimal("0"),
+    )
+    assets += sum((Decimal(str(balance)) for balance in jar_balances), Decimal("0"))
+    liabilities += sum(
+        (abs(Decimal(str(balance))) for balance in monobank_balances if balance < 0),
+        Decimal("0"),
+    )
+
     savings = await session.scalar(
         select(func.sum(FinancialAccount.balance)).where(
             FinancialAccount.user_id == user_id,
@@ -603,12 +634,16 @@ async def calculate_summary(
             )
         )
     ).one()
+    local_savings = Decimal(str(savings)) if savings is not None else Decimal("0")
+    monobank_savings = sum(
+        (Decimal(str(balance)) for balance in jar_balances), Decimal("0")
+    )
     return WealthSummary(
         currency=currency,
         assets=assets,
         liabilities=liabilities,
         net_worth=assets - liabilities,
-        savings=Decimal(str(savings)) if savings is not None else Decimal("0"),
+        savings=local_savings + monobank_savings,
         savings_goal_target=(
             Decimal(str(goal_totals[0])) if goal_totals[0] is not None else Decimal("0")
         ),

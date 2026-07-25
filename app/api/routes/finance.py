@@ -16,6 +16,7 @@ from app.models.finance import (
     TransactionSource,
 )
 from app.models.monobank import MonobankAccount, MonobankJar
+from app.models.privatbank import PrivatBankAccount
 from app.models.wealth import FinancialAccount, SavingsGoal
 from app.schemas.finance import (
     FinanceCategorySummary,
@@ -323,14 +324,15 @@ async def update_transaction(
         current_user.id,
     )
     changes = payload.model_dump(exclude_unset=True)
-    if transaction.source == TransactionSource.MONOBANK:
+    if transaction.source != TransactionSource.MANUAL:
         allowed_fields = {"category", "excluded_from_summary"}
         immutable_fields = set(changes) - allowed_fields
         if immutable_fields:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    "Monobank transactions only allow category and exclusion changes"
+                    "Imported bank transactions only allow category and "
+                    "exclusion changes"
                 ),
             )
         if "category" in changes:
@@ -362,10 +364,10 @@ async def delete_transaction(
         session,
         current_user.id,
     )
-    if transaction.source == TransactionSource.MONOBANK:
+    if transaction.source != TransactionSource.MANUAL:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Monobank transactions cannot be deleted",
+            detail="Imported bank transactions cannot be deleted",
         )
     await session.delete(transaction)
     await session.commit()
@@ -384,6 +386,7 @@ async def list_finance_currencies(
         (SavingsGoal, SavingsGoal.currency),
         (MonobankAccount, MonobankAccount.currency),
         (MonobankJar, MonobankJar.currency),
+        (PrivatBankAccount, PrivatBankAccount.currency),
     )
     currencies: set[str] = set()
     for model, column in model_columns:

@@ -7,40 +7,41 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import CurrentUserDep, SessionDep
-from app.integrations.monobank.client import (
-    MonobankAPIError,
-    MonobankClient,
-    get_monobank_client,
+from app.integrations.privatbank.client import (
+    PrivatBankAPIError,
+    PrivatBankClient,
+    get_privatbank_client,
 )
-from app.integrations.monobank.crypto import encrypt_monobank_token
-from app.integrations.monobank.service import (
+from app.integrations.privatbank.crypto import encrypt_privatbank_token
+from app.integrations.privatbank.service import (
     KYIV_TIMEZONE,
-    cancel_monobank_sync,
+    cancel_privatbank_sync,
     connection_response,
     default_sync_period,
-    schedule_monobank_sync,
-    statement_time_ranges,
-    synchronize_client_info,
+    provider_operating_date,
+    safe_server_metadata,
+    schedule_privatbank_sync,
+    synchronize_balances,
 )
 from app.models.finance import FinancialTransaction, TransactionSource
-from app.models.monobank import (
-    MonobankAccount,
-    MonobankConnection,
-    MonobankSyncStatus,
+from app.models.privatbank import (
+    PrivatBankAccount,
+    PrivatBankConnection,
+    PrivatBankSyncStatus,
 )
-from app.schemas.monobank import (
-    MonobankConnectionCreate,
-    MonobankConnectionResponse,
-    MonobankSyncAccepted,
-    MonobankSyncRequest,
-    MonobankTransactionsDeleteResponse,
+from app.schemas.privatbank import (
+    PrivatBankConnectionCreate,
+    PrivatBankConnectionResponse,
+    PrivatBankSyncAccepted,
+    PrivatBankSyncRequest,
+    PrivatBankTransactionsDeleteResponse,
 )
 
-router = APIRouter(prefix="/integrations/monobank", tags=["monobank"])
-MonobankClientDep = Annotated[MonobankClient, Depends(get_monobank_client)]
+router = APIRouter(prefix="/integrations/privatbank", tags=["privatbank"])
+PrivatBankClientDep = Annotated[PrivatBankClient, Depends(get_privatbank_client)]
 
 
-def _as_http_exception(error: MonobankAPIError) -> HTTPException:
+def _as_http_exception(error: PrivatBankAPIError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail=error.detail)
 
 
@@ -59,42 +60,53 @@ def _background_session_factory(
     )
 
 
-@router.post("/connection", response_model=MonobankConnectionResponse)
-async def connect_monobank(
-    payload: MonobankConnectionCreate,
+@router.post("/connection", response_model=PrivatBankConnectionResponse)
+async def connect_privatbank(
+    payload: PrivatBankConnectionCreate,
     session: SessionDep,
     current_user: CurrentUserDep,
-    client: MonobankClientDep,
-) -> MonobankConnectionResponse:
+    client: PrivatBankClientDep,
+) -> PrivatBankConnectionResponse:
     token = payload.token.get_secret_value().strip()
     if not token:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Monobank token cannot be empty.",
+            detail="PrivatBank API token cannot be empty.",
         )
     try:
-        client_info = await client.client_info(token, retry_transient=False)
-    except MonobankAPIError as exc:
+        settings_payload = await client.settings(token, retry_transient=False)
+        balance_date = provider_operating_date(settings_payload)
+        balance_payloads = await client.balances(
+            token,
+            balance_date,
+            balance_date,
+            retry_transient=False,
+        )
+    except PrivatBankAPIError as exc:
         raise _as_http_exception(exc) from exc
 
     connection = await session.scalar(
-        select(MonobankConnection).where(MonobankConnection.user_id == current_user.id)
+        select(PrivatBankConnection).where(
+            PrivatBankConnection.user_id == current_user.id
+        )
     )
-    if connection is not None and connection.sync_status == MonobankSyncStatus.RUNNING:
+    if (
+        connection is not None
+        and connection.sync_status == PrivatBankSyncStatus.RUNNING
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Monobank sync is already running.",
+            detail="PrivatBank sync is already running.",
         )
 
-    encrypted_token = encrypt_monobank_token(token)
+    encrypted_token = encrypt_privatbank_token(token)
     connected_at = datetime.now(UTC)
     if connection is None:
-        connection = MonobankConnection(
+        connection = PrivatBankConnection(
             id=uuid4(),
             user_id=current_user.id,
             encrypted_token=encrypted_token,
-            external_client_id="pending",
-            client_name="pending",
+            client_name="PrivatBank FOP",
             connected_at=connected_at,
         )
         session.add(connection)
@@ -103,7 +115,8 @@ async def connect_monobank(
         connection.encrypted_token = encrypted_token
         connection.connected_at = connected_at
 
-    connection.sync_status = MonobankSyncStatus.IDLE
+    connection.server_metadata = safe_server_metadata(settings_payload)
+    connection.sync_status = PrivatBankSyncStatus.IDLE
     connection.sync_progress_current = 0
     connection.sync_error = None
     connection.sync_date_from = None
@@ -111,8 +124,10 @@ async def connect_monobank(
     connection.last_sync_started_at = None
     connection.last_sync_completed_at = None
     try:
-        accounts = await synchronize_client_info(session, connection, client_info)
-    except MonobankAPIError as exc:
+        accounts = await synchronize_balances(
+            session, connection, balance_payloads
+        )
+    except PrivatBankAPIError as exc:
         await session.rollback()
         raise _as_http_exception(exc) from exc
     connection.sync_progress_total = len(accounts)
@@ -121,28 +136,32 @@ async def connect_monobank(
     return await connection_response(session, connection)
 
 
-@router.get("/connection", response_model=MonobankConnectionResponse)
-async def get_monobank_connection(
+@router.get("/connection", response_model=PrivatBankConnectionResponse)
+async def get_privatbank_connection(
     session: SessionDep,
     current_user: CurrentUserDep,
-) -> MonobankConnectionResponse:
+) -> PrivatBankConnectionResponse:
     connection = await session.scalar(
-        select(MonobankConnection).where(MonobankConnection.user_id == current_user.id)
+        select(PrivatBankConnection).where(
+            PrivatBankConnection.user_id == current_user.id
+        )
     )
     return await connection_response(session, connection)
 
 
 @router.delete("/connection", status_code=status.HTTP_204_NO_CONTENT)
-async def disconnect_monobank(
+async def disconnect_privatbank(
     session: SessionDep,
     current_user: CurrentUserDep,
 ) -> Response:
     connection = await session.scalar(
-        select(MonobankConnection).where(MonobankConnection.user_id == current_user.id)
+        select(PrivatBankConnection).where(
+            PrivatBankConnection.user_id == current_user.id
+        )
     )
     if connection is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    await cancel_monobank_sync(connection.id)
+    await cancel_privatbank_sync(connection.id)
     await session.delete(connection)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -150,25 +169,27 @@ async def disconnect_monobank(
 
 @router.post(
     "/sync",
-    response_model=MonobankSyncAccepted,
+    response_model=PrivatBankSyncAccepted,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def start_monobank_sync(
+async def start_privatbank_sync(
     session: SessionDep,
     current_user: CurrentUserDep,
-    client: MonobankClientDep,
-    payload: Annotated[MonobankSyncRequest | None, Body()] = None,
-) -> MonobankSyncAccepted:
+    client: PrivatBankClientDep,
+    payload: Annotated[PrivatBankSyncRequest | None, Body()] = None,
+) -> PrivatBankSyncAccepted:
     connection = await session.scalar(
-        select(MonobankConnection).where(MonobankConnection.user_id == current_user.id)
+        select(PrivatBankConnection).where(
+            PrivatBankConnection.user_id == current_user.id
+        )
     )
     if connection is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Monobank connection not found.",
+            detail="PrivatBank connection not found.",
         )
 
-    request = payload or MonobankSyncRequest()
+    request = payload or PrivatBankSyncRequest()
     default_date_from, default_date_to = default_sync_period()
     date_from = request.date_from or default_date_from
     date_to = request.date_to or default_date_to
@@ -178,45 +199,44 @@ async def start_monobank_sync(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="date_to cannot be in the future",
         )
-    range_count = len(statement_time_ranges(date_from, date_to))
 
     account_count = await session.scalar(
         select(func.count())
-        .select_from(MonobankAccount)
+        .select_from(PrivatBankAccount)
         .where(
-            MonobankAccount.connection_id == connection.id,
-            MonobankAccount.user_id == current_user.id,
+            PrivatBankAccount.connection_id == connection.id,
+            PrivatBankAccount.user_id == current_user.id,
         )
     )
     started = await session.scalar(
-        update(MonobankConnection)
+        update(PrivatBankConnection)
         .where(
-            MonobankConnection.id == connection.id,
-            MonobankConnection.user_id == current_user.id,
-            MonobankConnection.sync_status != MonobankSyncStatus.RUNNING,
+            PrivatBankConnection.id == connection.id,
+            PrivatBankConnection.user_id == current_user.id,
+            PrivatBankConnection.sync_status != PrivatBankSyncStatus.RUNNING,
         )
         .values(
-            sync_status=MonobankSyncStatus.RUNNING,
+            sync_status=PrivatBankSyncStatus.RUNNING,
             sync_progress_current=0,
-            sync_progress_total=(account_count or 0) * range_count,
+            sync_progress_total=account_count or 0,
             sync_error=None,
             sync_date_from=date_from,
             sync_date_to=date_to,
             last_sync_started_at=datetime.now(UTC),
             last_sync_completed_at=None,
         )
-        .returning(MonobankConnection.id)
+        .returning(PrivatBankConnection.id)
     )
     if started is None:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Monobank sync is already running.",
+            detail="PrivatBank sync is already running.",
         )
     await session.commit()
 
     session_factory = _background_session_factory(session)
-    schedule_monobank_sync(
+    schedule_privatbank_sync(
         connection.id,
         current_user.id,
         session_factory,
@@ -224,10 +244,10 @@ async def start_monobank_sync(
         date_from,
         date_to,
     )
-    return MonobankSyncAccepted(
-        status=MonobankSyncStatus.RUNNING,
+    return PrivatBankSyncAccepted(
+        status=PrivatBankSyncStatus.RUNNING,
         sync_progress_current=0,
-        sync_progress_total=(account_count or 0) * range_count,
+        sync_progress_total=account_count or 0,
         date_from=date_from,
         date_to=date_to,
     )
@@ -235,46 +255,48 @@ async def start_monobank_sync(
 
 @router.delete(
     "/accounts/{account_id}/transactions",
-    response_model=MonobankTransactionsDeleteResponse,
+    response_model=PrivatBankTransactionsDeleteResponse,
 )
-async def delete_monobank_account_transactions(
+async def delete_privatbank_account_transactions(
     account_id: UUID,
     session: SessionDep,
     current_user: CurrentUserDep,
-) -> MonobankTransactionsDeleteResponse:
+) -> PrivatBankTransactionsDeleteResponse:
     account = await session.scalar(
-        select(MonobankAccount).where(
-            MonobankAccount.id == account_id,
-            MonobankAccount.user_id == current_user.id,
+        select(PrivatBankAccount).where(
+            PrivatBankAccount.id == account_id,
+            PrivatBankAccount.user_id == current_user.id,
         )
     )
     if account is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Monobank account not found.",
+            detail="PrivatBank account not found.",
         )
     connection_status = await session.scalar(
-        select(MonobankConnection.sync_status).where(
-            MonobankConnection.id == account.connection_id,
-            MonobankConnection.user_id == current_user.id,
+        select(PrivatBankConnection.sync_status).where(
+            PrivatBankConnection.id == account.connection_id,
+            PrivatBankConnection.user_id == current_user.id,
         )
     )
-    if connection_status == MonobankSyncStatus.RUNNING:
+    if connection_status == PrivatBankSyncStatus.RUNNING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Wait for the active Monobank sync to finish before deleting data.",
+            detail=(
+                "Wait for the active PrivatBank sync to finish before deleting data."
+            ),
         )
 
     result = await session.execute(
         delete(FinancialTransaction).where(
             FinancialTransaction.user_id == current_user.id,
-            FinancialTransaction.source == TransactionSource.MONOBANK,
+            FinancialTransaction.source == TransactionSource.PRIVATBANK,
             FinancialTransaction.external_account_id == account.external_id,
         )
     )
     deleted_count = int(getattr(result, "rowcount", 0) or 0)
     await session.commit()
-    return MonobankTransactionsDeleteResponse(
+    return PrivatBankTransactionsDeleteResponse(
         account_id=account.id,
         deleted_count=max(deleted_count, 0),
     )

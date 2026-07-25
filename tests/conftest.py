@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,7 +11,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401 -- register every table before create_all
 from app.db.base import Base
@@ -24,17 +24,18 @@ TEST_USER_PASSWORD = "OwnerPassword1!"
 
 
 @pytest.fixture
-async def sqlite_session_override() -> AsyncIterator[SessionOverride]:
+async def sqlite_session_override(tmp_path: Path) -> AsyncIterator[SessionOverride]:
+    database_path = tmp_path / "better-tracker-test.sqlite3"
     engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        f"sqlite+aiosqlite:///{database_path}",
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
 
     @event.listens_for(engine.sync_engine, "connect")
     def enable_foreign_keys(dbapi_connection: Any, _: Any) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
     def restore_workout_timezone(workout: Workout, _: Any) -> None:

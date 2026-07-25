@@ -32,6 +32,7 @@ class TransactionKind(StrEnum):
 class TransactionSource(StrEnum):
     MANUAL = "manual"
     MONOBANK = "monobank"
+    PRIVATBANK = "privatbank"
 
 
 class FinancialTransaction(

@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEVELOPMENT_JWT_SECRET = "development-only-secret-change-before-running-in-production"
 DEVELOPMENT_MONOBANK_ENCRYPTION_KEY = "YmV0dGVyLXRyYWNrZXItbW9ub2JhbmstZGV2LWtleSE="
+DEVELOPMENT_PRIVATBANK_ENCRYPTION_KEY = "FU0XZuwTkrhstlI0PJ2amnWd1azqg50-mdooWQogWYI="
 
 
 class Settings(BaseSettings):
@@ -30,6 +31,9 @@ class Settings(BaseSettings):
     monobank_token_encryption_key: SecretStr = SecretStr(
         DEVELOPMENT_MONOBANK_ENCRYPTION_KEY
     )
+    privatbank_token_encryption_key: SecretStr = SecretStr(
+        DEVELOPMENT_PRIVATBANK_ENCRYPTION_KEY
+    )
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
@@ -47,14 +51,28 @@ class Settings(BaseSettings):
                     "MONOBANK_TOKEN_ENCRYPTION_KEY must be changed outside "
                     "development and test"
                 )
+            if (
+                self.privatbank_token_encryption_key.get_secret_value()
+                == DEVELOPMENT_PRIVATBANK_ENCRYPTION_KEY
+            ):
+                raise ValueError(
+                    "PRIVATBANK_TOKEN_ENCRYPTION_KEY must be changed outside "
+                    "development and test"
+                )
 
-        key = self.monobank_token_encryption_key.get_secret_value()
-        try:
-            Fernet(key.encode("ascii"))
-        except (UnicodeEncodeError, ValueError) as exc:
-            raise ValueError(
-                "MONOBANK_TOKEN_ENCRYPTION_KEY must be a Fernet key"
-            ) from exc
+        encryption_keys = {
+            "MONOBANK_TOKEN_ENCRYPTION_KEY": (
+                self.monobank_token_encryption_key.get_secret_value()
+            ),
+            "PRIVATBANK_TOKEN_ENCRYPTION_KEY": (
+                self.privatbank_token_encryption_key.get_secret_value()
+            ),
+        }
+        for setting_name, key in encryption_keys.items():
+            try:
+                Fernet(key.encode("ascii"))
+            except (UnicodeEncodeError, ValueError) as exc:
+                raise ValueError(f"{setting_name} must be a Fernet key") from exc
         return self
 
 

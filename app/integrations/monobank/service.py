@@ -500,6 +500,7 @@ async def run_monobank_sync(
                 )
                 .values(
                     sync_status=MonobankSyncStatus.SUCCEEDED,
+                    sync_progress_current=progress,
                     sync_error=None,
                     last_sync_completed_at=datetime.now(UTC),
                 )

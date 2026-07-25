@@ -16,7 +16,9 @@ def test_access_token_round_trip_and_rejects_tampering() -> None:
     assert expires_in == 1800
     assert decode_access_token(token) == user_id
 
-    tampered_token = f"{token[:-1]}{'a' if token[-1] != 'a' else 'b'}"
+    header, payload, signature = token.split(".")
+    replacement = "A" if signature[0] != "A" else "B"
+    tampered_token = f"{header}.{payload}.{replacement}{signature[1:]}"
     with pytest.raises(jwt.InvalidTokenError):
         decode_access_token(tampered_token)
 
@@ -47,6 +49,9 @@ def test_settings_require_a_strong_non_default_production_secret() -> None:
         Settings(_env_file=None, monobank_token_encryption_key="not-a-fernet-key")
 
     with pytest.raises(ValidationError):
+        Settings(_env_file=None, privatbank_token_encryption_key="not-a-fernet-key")
+
+    with pytest.raises(ValidationError):
         Settings(
             _env_file=None,
             environment="production",
@@ -58,5 +63,6 @@ def test_settings_require_a_strong_non_default_production_secret() -> None:
         environment="production",
         jwt_secret_key="a-production-secret-with-at-least-32-characters",
         monobank_token_encryption_key=Fernet.generate_key().decode("ascii"),
+        privatbank_token_encryption_key=Fernet.generate_key().decode("ascii"),
     )
     assert production_settings.environment == "production"

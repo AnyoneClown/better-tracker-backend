@@ -156,17 +156,22 @@ Settings are read from environment variables and, for local commands, `.env`.
 | `JWT_AUDIENCE` | `better-tracker-api` | Required JWT audience claim. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access-token lifetime, from 1 minute to 24 hours. |
 | `MONOBANK_TOKEN_ENCRYPTION_KEY` | Development-only value | Fernet key used only to encrypt Monobank Personal API tokens at rest. Generate a distinct production key and keep it in secret storage. |
+| `PRIVATBANK_TOKEN_ENCRYPTION_KEY` | Development-only value | Separate Fernet key used only to encrypt Privat24 Business API tokens at rest. Generate a distinct production key and keep it in secret storage. |
 
-Generate a production Fernet key after installing the project, then store the
-output as `MONOBANK_TOKEN_ENCRYPTION_KEY`:
+Generate two production Fernet keys after installing the project, then store
+the outputs separately as `MONOBANK_TOKEN_ENCRYPTION_KEY` and
+`PRIVATBANK_TOKEN_ENCRYPTION_KEY`:
 
 ```bash
 uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 ```
 
-Changing or losing this key makes existing Monobank connections unreadable;
-users must reconnect. The checked-in value is for local development only and is
-rejected when `ENVIRONMENT` is neither `development` nor `test`.
+Run the command twice; do not reuse one bank's key for the other bank.
+
+Changing or losing either key makes connections encrypted with that key
+unreadable; users must reconnect the affected bank. Checked-in values are for
+local development only and are rejected when `ENVIRONMENT` is neither
+`development` nor `test`.
 
 ## API overview
 
@@ -227,13 +232,13 @@ Categories are stored as normalized lowercase values with repeated whitespace
 collapsed. This keeps transaction filters and category budgets aligned when a
 caller sends variants such as `Food`, `food`, or ` food `.
 
-Pending Monobank operations and transactions explicitly excluded by a user stay
-visible in the ledger but do not contribute to cash-flow summaries. Manual
-transactions remain fully editable and deletable. Imported Monobank rows only
-allow category and summary-exclusion changes; their bank-supplied fields are
-read-only. Users can bulk-delete every imported row for one connected card;
-manual rows and other cards are unaffected, and a later sync can import the
-deleted provider rows again.
+Pending imported operations and transactions explicitly excluded by a user
+stay visible in the ledger but do not contribute to cash-flow summaries.
+Manual transactions remain fully editable and deletable. Imported Monobank and
+PrivatBank rows only allow category and summary-exclusion changes; their
+bank-supplied fields are read-only. Users can bulk-delete every imported row
+for one connected bank account; manual rows and other accounts are unaffected,
+and a later sync can import deleted provider rows again.
 
 ### Monobank Personal API
 
@@ -271,6 +276,44 @@ use Monobank's Provider API before offering Better Tracker to unrelated users.
 The v1 background task assumes one Uvicorn worker; multi-worker or scale-out
 deployments need a durable external job queue. Sync is manual—there is no
 scheduler or webhook.
+
+### PrivatBank FOP API
+
+- `POST /api/v1/integrations/privatbank/connection` — validate a Privat24 for
+  Business API token through read-only statement methods, encrypt it with a
+  dedicated Fernet key, and store current FOP account balances.
+- `GET /api/v1/integrations/privatbank/connection` — return safe connection,
+  progress, and account state. The token and ciphertext are never returned.
+- `DELETE /api/v1/integrations/privatbank/connection` — delete credentials and
+  live account state while retaining already imported transactions.
+- `POST /api/v1/integrations/privatbank/sync` — return `202 Accepted` and import
+  an inclusive `date_from`/`date_to` period in the background. Without a body,
+  the latest 31 calendar days are used. A second active sync returns `409`.
+- `DELETE /api/v1/integrations/privatbank/accounts/{account_id}/transactions` —
+  delete only that authenticated user's imported transactions for one FOP
+  account. Deletion is rejected while its sync is active.
+
+The integration uses only the official AutoClient v3 GET endpoints for server
+settings, balances, and transactions. It follows statement pagination via
+`followId`, treats the documented `REF + REFN` pair as the provider transaction
+identifier, and commits progress after every account. Repeated syncs update
+provider fields without duplicates and retain the user's category override and
+summary exclusion. Non-booked operations remain visible as pending and do not
+affect summaries. Positive account balances contribute to assets; negative
+balances contribute to liabilities by absolute value. There is no FX
+conversion.
+
+Create the token in Privat24 for Business under **Accounting and reports →
+Integration (AutoClient) → API**. In **Service restrictions**, enable only
+**Get account balances and transactions** so the token cannot create payments.
+Better Tracker implements no provider calls for payments, invoices, payroll,
+or document writes. See the
+[official PrivatBank AutoClient API v3 documentation](https://docs.google.com/document/d/e/2PACX-1vTtKvGa3P4E-lDqLg3bHRF6Wi9S7GIjSMFEFxII5qQZBGxuTXs25hQNiUU1hMZQhOyx6BNvIZ1bVKSr/pub).
+The integration is intentionally limited to FOP/business accounts; personal
+Privat24 cards are not supported.
+
+Like the Monobank worker, this background task assumes one Uvicorn worker and
+manual sync. A multi-worker deployment needs an external durable job queue.
 
 ### Wealth, savings, and net worth
 
@@ -434,9 +477,9 @@ only.
 For production, use a secure CockroachDB deployment or CockroachDB Cloud, a
 least-privileged SQL user, certificate-verified TLS, secret-managed connection
 credentials, strong and distinct secret-managed `JWT_SECRET_KEY` and
-`MONOBANK_TOKEN_ENCRYPTION_KEY` values, HTTPS for both frontend and API, and
-restricted CORS origins. HTTPS is required before sending a personal Monobank
-token outside local development. Replace the local URL with the secure
+bank-specific Fernet key values, HTTPS for both frontend and API, and
+restricted CORS origins. HTTPS is required before sending either bank token
+outside local development. Replace the local URL with the secure
 `cockroachdb+asyncpg://` connection details for that cluster.
 
 The SQLAlchemy engine uses CockroachDB's `SERIALIZABLE` isolation. Under write

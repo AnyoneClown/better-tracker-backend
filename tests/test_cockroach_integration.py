@@ -3,6 +3,7 @@ import os
 import re
 from collections.abc import Iterator
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +44,26 @@ def admin_execute(statement: str) -> None:
     asyncio.run(execute())
 
 
+def database_execute(statement: str) -> None:
+    database_url = make_url(os.environ["DATABASE_URL"])
+
+    async def execute() -> None:
+        connection = await asyncpg.connect(
+            user=database_url.username or "root",
+            password=database_url.password,
+            host=database_url.host or "localhost",
+            port=database_url.port or 26257,
+            database=database_url.database,
+            ssl=False,
+        )
+        try:
+            await connection.execute(statement)
+        finally:
+            await connection.close()
+
+    asyncio.run(execute())
+
+
 @pytest.fixture(scope="module", autouse=True)
 def migrated_database() -> Iterator[None]:
     database_url = make_url(os.environ["DATABASE_URL"])
@@ -67,6 +88,36 @@ def migrated_database() -> Iterator[None]:
 def test_all_trackers_against_cockroach() -> None:
     with TestClient(app) as client:
         assert client.get("/readyz").status_code == 200
+
+        registration = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": " Integration.User@Example.COM ",
+                "password": "StrongPassword1!",
+            },
+        )
+        duplicate_registration = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "integration.user@example.com",
+                "password": "StrongPassword1!",
+            },
+        )
+        assert registration.status_code == 201
+        assert registration.json()["email"] == "integration.user@example.com"
+        assert "password" not in registration.json()
+        assert "hashed_password" not in registration.json()
+        assert duplicate_registration.status_code == 409
+        login = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "integration.user@example.com",
+                "password": "StrongPassword1!",
+            },
+        )
+        assert login.status_code == 200
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+        assert client.get("/api/v1/auth/me").status_code == 200
 
         empty_wealth = client.get("/api/v1/wealth/summary?currency=USD")
         empty_health = client.get("/api/v1/health/summary")
@@ -464,3 +515,29 @@ def test_all_trackers_against_cockroach() -> None:
         assert health.status_code == 200
         assert Decimal(health.json()["weight_change_kg"]) == Decimal("-0.65")
         assert health.json()["total_calories"] == 2150
+
+
+def test_demo_seed_is_idempotent_and_owned_by_demo_user() -> None:
+    seed_sql = Path("scripts/seed_dev.sql").read_text(encoding="utf-8")
+    database_execute(seed_sql)
+    database_execute(seed_sql)
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "demo@example.com",
+                "password": "DemoPassword1!",
+            },
+        )
+        assert login.status_code == 200, login.text
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+
+        budgets = client.get("/api/v1/finance/budgets")
+        workouts = client.get("/api/v1/workouts")
+        weights = client.get("/api/v1/health/weights")
+        accounts = client.get("/api/v1/wealth/accounts")
+        assert budgets.json()["total"] == 6
+        assert workouts.json()["total"] == 4
+        assert weights.json()["total"] == 5
+        assert accounts.json()["total"] == 5

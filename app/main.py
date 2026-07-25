@@ -19,7 +19,7 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description=(
-        "Single-user API for workouts, cash flow and budgets, wealth, "
+        "Authenticated API for workouts, cash flow and budgets, wealth, "
         "body weight, and daily nutrition."
     ),
     lifespan=lifespan,

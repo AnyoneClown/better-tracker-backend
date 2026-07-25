@@ -4,10 +4,10 @@ from decimal import Decimal
 from sqlalchemy import CheckConstraint, Date, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import Base, TimestampMixin, UserOwnedMixin, UUIDPrimaryKeyMixin
 
 
-class WeightEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class WeightEntry(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "weight_entries"
     __table_args__ = (
         CheckConstraint("weight_kg > 0", name="weight_kg_positive"),
@@ -16,7 +16,11 @@ class WeightEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "(body_fat_percent >= 0 AND body_fat_percent <= 100)",
             name="body_fat_percent_range",
         ),
-        UniqueConstraint("recorded_on", name="uq_weight_entry_recorded_on"),
+        UniqueConstraint(
+            "user_id",
+            "recorded_on",
+            name="uq_weight_entry_recorded_on",
+        ),
     )
 
     recorded_on: Mapped[date] = mapped_column(Date, nullable=False)
@@ -28,7 +32,7 @@ class WeightEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
-class NutritionLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class NutritionLog(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "nutrition_logs"
     __table_args__ = (
         CheckConstraint("calories >= 0", name="calories_nonnegative"),
@@ -48,7 +52,11 @@ class NutritionLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "fat_grams IS NULL OR fat_grams >= 0",
             name="fat_grams_nonnegative",
         ),
-        UniqueConstraint("recorded_on", name="uq_nutrition_log_recorded_on"),
+        UniqueConstraint(
+            "user_id",
+            "recorded_on",
+            name="uq_nutrition_log_recorded_on",
+        ),
     )
 
     recorded_on: Mapped[date] = mapped_column(Date, nullable=False)

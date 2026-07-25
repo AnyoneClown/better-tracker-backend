@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.dependencies import SessionDep
+from app.api.dependencies import CurrentUserDep, SessionDep
 from app.models.health import NutritionLog, WeightEntry
 from app.schemas.health import (
     HealthSummary,
@@ -58,8 +58,17 @@ async def commit_unique_date(session: SessionDep, detail: str) -> None:
         raise
 
 
-async def get_weight_or_404(session: SessionDep, entry_id: UUID) -> WeightEntry:
-    entry = await session.get(WeightEntry, entry_id)
+async def get_weight_or_404(
+    session: SessionDep,
+    entry_id: UUID,
+    user_id: UUID,
+) -> WeightEntry:
+    entry = await session.scalar(
+        select(WeightEntry).where(
+            WeightEntry.id == entry_id,
+            WeightEntry.user_id == user_id,
+        )
+    )
     if entry is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -76,8 +85,9 @@ async def get_weight_or_404(session: SessionDep, entry_id: UUID) -> WeightEntry:
 async def create_weight_entry(
     payload: WeightEntryCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> WeightEntry:
-    entry = WeightEntry(**payload.model_dump())
+    entry = WeightEntry(**payload.model_dump(), user_id=current_user.id)
     session.add(entry)
     await commit_unique_date(session, "a weight entry already exists for this date")
     await session.refresh(entry)
@@ -87,13 +97,14 @@ async def create_weight_entry(
 @router.get("/weights", response_model=WeightEntryListResponse)
 async def list_weight_entries(
     session: SessionDep,
+    current_user: CurrentUserDep,
     start_date: date | None = None,
     end_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> WeightEntryListResponse:
     validate_date_range(start_date, end_date)
-    filters = []
+    filters = [WeightEntry.user_id == current_user.id]
     if start_date is not None:
         filters.append(WeightEntry.recorded_on >= start_date)
     if end_date is not None:
@@ -118,8 +129,12 @@ async def list_weight_entries(
 
 
 @router.get("/weights/{entry_id}", response_model=WeightEntryResponse)
-async def get_weight_entry(entry_id: UUID, session: SessionDep) -> WeightEntry:
-    return await get_weight_or_404(session, entry_id)
+async def get_weight_entry(
+    entry_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> WeightEntry:
+    return await get_weight_or_404(session, entry_id, current_user.id)
 
 
 @router.patch("/weights/{entry_id}", response_model=WeightEntryResponse)
@@ -127,8 +142,9 @@ async def update_weight_entry(
     entry_id: UUID,
     payload: WeightEntryUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> WeightEntry:
-    entry = await get_weight_or_404(session, entry_id)
+    entry = await get_weight_or_404(session, entry_id, current_user.id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(entry, field, value)
     await commit_unique_date(session, "a weight entry already exists for this date")
@@ -137,15 +153,28 @@ async def update_weight_entry(
 
 
 @router.delete("/weights/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_weight_entry(entry_id: UUID, session: SessionDep) -> Response:
-    entry = await get_weight_or_404(session, entry_id)
+async def delete_weight_entry(
+    entry_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    entry = await get_weight_or_404(session, entry_id, current_user.id)
     await session.delete(entry)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def get_nutrition_or_404(session: SessionDep, log_id: UUID) -> NutritionLog:
-    log = await session.get(NutritionLog, log_id)
+async def get_nutrition_or_404(
+    session: SessionDep,
+    log_id: UUID,
+    user_id: UUID,
+) -> NutritionLog:
+    log = await session.scalar(
+        select(NutritionLog).where(
+            NutritionLog.id == log_id,
+            NutritionLog.user_id == user_id,
+        )
+    )
     if log is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -162,8 +191,9 @@ async def get_nutrition_or_404(session: SessionDep, log_id: UUID) -> NutritionLo
 async def create_nutrition_log(
     payload: NutritionLogCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> NutritionLog:
-    log = NutritionLog(**payload.model_dump())
+    log = NutritionLog(**payload.model_dump(), user_id=current_user.id)
     session.add(log)
     await commit_unique_date(session, "a nutrition log already exists for this date")
     await session.refresh(log)
@@ -173,13 +203,14 @@ async def create_nutrition_log(
 @router.get("/nutrition", response_model=NutritionLogListResponse)
 async def list_nutrition_logs(
     session: SessionDep,
+    current_user: CurrentUserDep,
     start_date: date | None = None,
     end_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> NutritionLogListResponse:
     validate_date_range(start_date, end_date)
-    filters = []
+    filters = [NutritionLog.user_id == current_user.id]
     if start_date is not None:
         filters.append(NutritionLog.recorded_on >= start_date)
     if end_date is not None:
@@ -204,8 +235,12 @@ async def list_nutrition_logs(
 
 
 @router.get("/nutrition/{log_id}", response_model=NutritionLogResponse)
-async def get_nutrition_log(log_id: UUID, session: SessionDep) -> NutritionLog:
-    return await get_nutrition_or_404(session, log_id)
+async def get_nutrition_log(
+    log_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> NutritionLog:
+    return await get_nutrition_or_404(session, log_id, current_user.id)
 
 
 @router.patch("/nutrition/{log_id}", response_model=NutritionLogResponse)
@@ -213,8 +248,9 @@ async def update_nutrition_log(
     log_id: UUID,
     payload: NutritionLogUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> NutritionLog:
-    log = await get_nutrition_or_404(session, log_id)
+    log = await get_nutrition_or_404(session, log_id, current_user.id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(log, field, value)
     await commit_unique_date(session, "a nutrition log already exists for this date")
@@ -223,8 +259,12 @@ async def update_nutrition_log(
 
 
 @router.delete("/nutrition/{log_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_nutrition_log(log_id: UUID, session: SessionDep) -> Response:
-    log = await get_nutrition_or_404(session, log_id)
+async def delete_nutrition_log(
+    log_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    log = await get_nutrition_or_404(session, log_id, current_user.id)
     await session.delete(log)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -233,18 +273,19 @@ async def delete_nutrition_log(log_id: UUID, session: SessionDep) -> Response:
 @router.get("/summary", response_model=HealthSummary)
 async def get_health_summary(
     session: SessionDep,
+    current_user: CurrentUserDep,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> HealthSummary:
     validate_date_range(start_date, end_date)
 
-    weight_filters = []
+    weight_filters = [WeightEntry.user_id == current_user.id]
     nutrition_statement = select(
         func.count(NutritionLog.id),
         func.sum(NutritionLog.calories),
         func.avg(NutritionLog.calories),
         func.avg(NutritionLog.calorie_target),
-    )
+    ).where(NutritionLog.user_id == current_user.id)
     if start_date is not None:
         weight_filters.append(WeightEntry.recorded_on >= start_date)
         nutrition_statement = nutrition_statement.where(

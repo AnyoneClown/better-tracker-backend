@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import Base, TimestampMixin, UserOwnedMixin, UUIDPrimaryKeyMixin
 
 
 class TransactionKind(StrEnum):
@@ -24,7 +24,12 @@ class TransactionKind(StrEnum):
     EXPENSE = "expense"
 
 
-class FinancialTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class FinancialTransaction(
+    UserOwnedMixin,
+    UUIDPrimaryKeyMixin,
+    TimestampMixin,
+    Base,
+):
     __tablename__ = "financial_transactions"
     __table_args__ = (
         CheckConstraint("amount > 0", name="amount_positive"),
@@ -60,7 +65,7 @@ class FinancialTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
-class MonthlyBudget(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class MonthlyBudget(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "monthly_budgets"
     __table_args__ = (
         CheckConstraint("year >= 1 AND year <= 9999", name="year_valid"),
@@ -68,6 +73,7 @@ class MonthlyBudget(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("limit_amount > 0", name="limit_amount_positive"),
         CheckConstraint("length(currency) = 3", name="currency_three_chars"),
         UniqueConstraint(
+            "user_id",
             "year",
             "month",
             "category",

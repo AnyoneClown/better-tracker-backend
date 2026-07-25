@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from datetime import UTC
 from typing import Any
 
@@ -18,7 +18,9 @@ from app.db.session import get_session
 from app.main import app
 from app.models.workout import Workout
 
-SessionOverride = Callable[[], AsyncIterator[AsyncSession]]
+SessionOverride = Callable[[], AsyncGenerator[AsyncSession]]
+TEST_USER_EMAIL = "owner@example.com"
+TEST_USER_PASSWORD = "OwnerPassword1!"
 
 
 @pytest.fixture
@@ -53,7 +55,7 @@ async def sqlite_session_override() -> AsyncIterator[SessionOverride]:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
-    async def override_get_session() -> AsyncIterator[AsyncSession]:
+    async def override_get_session() -> AsyncGenerator[AsyncSession]:
         async with session_factory() as session:
             try:
                 yield session
@@ -69,7 +71,7 @@ async def sqlite_session_override() -> AsyncIterator[SessionOverride]:
 
 
 @pytest.fixture
-async def api_client(
+async def unauthenticated_api_client(
     sqlite_session_override: SessionOverride,
 ) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_session] = sqlite_session_override
@@ -80,3 +82,23 @@ async def api_client(
             yield client
     finally:
         app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.fixture
+async def api_client(
+    unauthenticated_api_client: AsyncClient,
+) -> AsyncIterator[AsyncClient]:
+    registration = await unauthenticated_api_client.post(
+        "/api/v1/auth/register",
+        json={"email": TEST_USER_EMAIL, "password": TEST_USER_PASSWORD},
+    )
+    assert registration.status_code == 201, registration.text
+    login = await unauthenticated_api_client.post(
+        "/api/v1/auth/login",
+        json={"email": TEST_USER_EMAIL, "password": TEST_USER_PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+    unauthenticated_api_client.headers["Authorization"] = (
+        f"Bearer {login.json()['access_token']}"
+    )
+    yield unauthenticated_api_client

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import SessionDep
+from app.api.dependencies import CurrentUserDep, SessionDep
 from app.models.workout import Workout, WorkoutSet
 from app.schemas.workout import (
     WorkoutCreate,
@@ -21,10 +21,14 @@ from app.schemas.workout import (
 router = APIRouter(prefix="/workouts", tags=["workouts"])
 
 
-async def _get_workout(workout_id: UUID, session: SessionDep) -> Workout:
+async def _get_workout(
+    workout_id: UUID,
+    session: SessionDep,
+    user_id: UUID,
+) -> Workout:
     result = await session.execute(
         select(Workout)
-        .where(Workout.id == workout_id)
+        .where(Workout.id == workout_id, Workout.user_id == user_id)
         .options(selectinload(Workout.sets))
     )
     workout = result.scalar_one_or_none()
@@ -55,21 +59,27 @@ def _validate_date_range(date_from: datetime | None, date_to: datetime | None) -
     response_model=WorkoutRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_workout(payload: WorkoutCreate, session: SessionDep) -> Workout:
+async def create_workout(
+    payload: WorkoutCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Workout:
     workout = Workout(
         **payload.model_dump(exclude={"sets"}),
+        user_id=current_user.id,
         sets=[WorkoutSet(**item.model_dump()) for item in payload.sets],
     )
     session.add(workout)
     await session.flush()
     workout_id = workout.id
     await session.commit()
-    return await _get_workout(workout_id, session)
+    return await _get_workout(workout_id, session, current_user.id)
 
 
 @router.get("", response_model=WorkoutListResponse)
 async def list_workouts(
     session: SessionDep,
+    current_user: CurrentUserDep,
     date_from: Annotated[datetime | None, Query()] = None,
     date_to: Annotated[datetime | None, Query()] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -77,7 +87,7 @@ async def list_workouts(
 ) -> WorkoutListResponse:
     _validate_date_range(date_from, date_to)
 
-    filters = []
+    filters = [Workout.user_id == current_user.id]
     if date_from is not None:
         filters.append(Workout.performed_at >= date_from)
     if date_to is not None:
@@ -106,12 +116,13 @@ async def list_workouts(
 @router.get("/summary", response_model=WorkoutSummary)
 async def get_workout_summary(
     session: SessionDep,
+    current_user: CurrentUserDep,
     date_from: Annotated[datetime | None, Query()] = None,
     date_to: Annotated[datetime | None, Query()] = None,
 ) -> WorkoutSummary:
     _validate_date_range(date_from, date_to)
 
-    filters = []
+    filters = [Workout.user_id == current_user.id]
     if date_from is not None:
         filters.append(Workout.performed_at >= date_from)
     if date_to is not None:
@@ -192,8 +203,12 @@ async def get_workout_summary(
 
 
 @router.get("/{workout_id}", response_model=WorkoutRead)
-async def get_workout(workout_id: UUID, session: SessionDep) -> Workout:
-    return await _get_workout(workout_id, session)
+async def get_workout(
+    workout_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Workout:
+    return await _get_workout(workout_id, session, current_user.id)
 
 
 @router.patch("/{workout_id}", response_model=WorkoutRead)
@@ -201,8 +216,9 @@ async def update_workout(
     workout_id: UUID,
     payload: WorkoutUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> Workout:
-    workout = await _get_workout(workout_id, session)
+    workout = await _get_workout(workout_id, session, current_user.id)
 
     for field_name, value in payload.model_dump(
         exclude_unset=True, exclude={"sets"}
@@ -217,7 +233,7 @@ async def update_workout(
         workout.updated_at = datetime.now(UTC)
 
     await session.commit()
-    return await _get_workout(workout_id, session)
+    return await _get_workout(workout_id, session, current_user.id)
 
 
 @router.delete(
@@ -225,8 +241,12 @@ async def update_workout(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def delete_workout(workout_id: UUID, session: SessionDep) -> Response:
-    workout = await _get_workout(workout_id, session)
+async def delete_workout(
+    workout_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    workout = await _get_workout(workout_id, session, current_user.id)
     await session.delete(workout)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

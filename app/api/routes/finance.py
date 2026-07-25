@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.dependencies import SessionDep
+from app.api.dependencies import CurrentUserDep, SessionDep
 from app.models.finance import FinancialTransaction, MonthlyBudget, TransactionKind
 from app.schemas.finance import (
     FinanceCategorySummary,
@@ -70,8 +70,14 @@ async def _commit(session: SessionDep, *, conflict_detail: str) -> None:
 async def _get_transaction_or_404(
     transaction_id: UUID,
     session: SessionDep,
+    user_id: UUID,
 ) -> FinancialTransaction:
-    transaction = await session.get(FinancialTransaction, transaction_id)
+    transaction = await session.scalar(
+        select(FinancialTransaction).where(
+            FinancialTransaction.id == transaction_id,
+            FinancialTransaction.user_id == user_id,
+        )
+    )
     if transaction is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -83,8 +89,14 @@ async def _get_transaction_or_404(
 async def _get_budget_or_404(
     budget_id: UUID,
     session: SessionDep,
+    user_id: UUID,
 ) -> MonthlyBudget:
-    budget = await session.get(MonthlyBudget, budget_id)
+    budget = await session.scalar(
+        select(MonthlyBudget).where(
+            MonthlyBudget.id == budget_id,
+            MonthlyBudget.user_id == user_id,
+        )
+    )
     if budget is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -96,6 +108,7 @@ async def _get_budget_or_404(
 @router.get("/summary", response_model=FinanceSummaryResponse)
 async def get_finance_summary(
     session: SessionDep,
+    current_user: CurrentUserDep,
     year: Annotated[int, Query(ge=1, le=9999)],
     month: Annotated[int, Query(ge=1, le=12)],
     currency: CurrencyQuery = "USD",
@@ -112,6 +125,7 @@ async def get_finance_summary(
                 func.sum(FinancialTransaction.amount),
             )
             .where(
+                FinancialTransaction.user_id == current_user.id,
                 FinancialTransaction.currency == currency,
                 FinancialTransaction.occurred_on >= period_start,
                 FinancialTransaction.occurred_on <= period_end,
@@ -123,6 +137,7 @@ async def get_finance_summary(
         await session.execute(
             select(MonthlyBudget.category, func.sum(MonthlyBudget.limit_amount))
             .where(
+                MonthlyBudget.user_id == current_user.id,
                 MonthlyBudget.year == year,
                 MonthlyBudget.month == month,
                 MonthlyBudget.currency == currency,
@@ -186,8 +201,12 @@ async def get_finance_summary(
 async def create_transaction(
     payload: FinancialTransactionCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> FinancialTransaction:
-    transaction = FinancialTransaction(**payload.model_dump())
+    transaction = FinancialTransaction(
+        **payload.model_dump(),
+        user_id=current_user.id,
+    )
     session.add(transaction)
     await _commit(session, conflict_detail="Financial transaction already exists")
     await session.refresh(transaction)
@@ -197,6 +216,7 @@ async def create_transaction(
 @router.get("/transactions", response_model=FinancialTransactionListResponse)
 async def list_transactions(
     session: SessionDep,
+    current_user: CurrentUserDep,
     kind: TransactionKind | None = None,
     category: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
     currency: Annotated[
@@ -214,7 +234,7 @@ async def list_transactions(
             detail="start_date must be on or before end_date",
         )
 
-    filters = []
+    filters = [FinancialTransaction.user_id == current_user.id]
     if kind is not None:
         filters.append(FinancialTransaction.kind == kind)
     if category is not None:
@@ -265,8 +285,13 @@ async def list_transactions(
 async def get_transaction(
     transaction_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> FinancialTransaction:
-    return await _get_transaction_or_404(transaction_id, session)
+    return await _get_transaction_or_404(
+        transaction_id,
+        session,
+        current_user.id,
+    )
 
 
 @router.patch(
@@ -277,8 +302,13 @@ async def update_transaction(
     transaction_id: UUID,
     payload: FinancialTransactionUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> FinancialTransaction:
-    transaction = await _get_transaction_or_404(transaction_id, session)
+    transaction = await _get_transaction_or_404(
+        transaction_id,
+        session,
+        current_user.id,
+    )
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(transaction, field, value)
 
@@ -295,8 +325,13 @@ async def update_transaction(
 async def delete_transaction(
     transaction_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> Response:
-    transaction = await _get_transaction_or_404(transaction_id, session)
+    transaction = await _get_transaction_or_404(
+        transaction_id,
+        session,
+        current_user.id,
+    )
     await session.delete(transaction)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -310,8 +345,9 @@ async def delete_transaction(
 async def create_budget(
     payload: MonthlyBudgetCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> MonthlyBudget:
-    budget = MonthlyBudget(**payload.model_dump())
+    budget = MonthlyBudget(**payload.model_dump(), user_id=current_user.id)
     session.add(budget)
     await _commit(
         session,
@@ -324,6 +360,7 @@ async def create_budget(
 @router.get("/budgets", response_model=MonthlyBudgetListResponse)
 async def list_budgets(
     session: SessionDep,
+    current_user: CurrentUserDep,
     year: Annotated[int | None, Query(ge=1, le=9999)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
     category: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
@@ -334,7 +371,7 @@ async def list_budgets(
     offset: Offset = 0,
     limit: Limit = 50,
 ) -> MonthlyBudgetListResponse:
-    filters = []
+    filters = [MonthlyBudget.user_id == current_user.id]
     if year is not None:
         filters.append(MonthlyBudget.year == year)
     if month is not None:
@@ -374,8 +411,12 @@ async def list_budgets(
 
 
 @router.get("/budgets/{budget_id}", response_model=MonthlyBudgetResponse)
-async def get_budget(budget_id: UUID, session: SessionDep) -> MonthlyBudget:
-    return await _get_budget_or_404(budget_id, session)
+async def get_budget(
+    budget_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> MonthlyBudget:
+    return await _get_budget_or_404(budget_id, session, current_user.id)
 
 
 @router.patch("/budgets/{budget_id}", response_model=MonthlyBudgetResponse)
@@ -383,8 +424,9 @@ async def update_budget(
     budget_id: UUID,
     payload: MonthlyBudgetUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> MonthlyBudget:
-    budget = await _get_budget_or_404(budget_id, session)
+    budget = await _get_budget_or_404(budget_id, session, current_user.id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(budget, field, value)
 
@@ -401,8 +443,12 @@ async def update_budget(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def delete_budget(budget_id: UUID, session: SessionDep) -> Response:
-    budget = await _get_budget_or_404(budget_id, session)
+async def delete_budget(
+    budget_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    budget = await _get_budget_or_404(budget_id, session, current_user.id)
     await session.delete(budget)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

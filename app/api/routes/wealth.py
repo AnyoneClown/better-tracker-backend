@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from app.api.dependencies import SessionDep
+from app.api.dependencies import CurrentUserDep, SessionDep
 from app.models.wealth import (
     AccountType,
     FinancialAccount,
@@ -95,8 +95,17 @@ async def run_with_serialization_retry[T](
     raise RuntimeError("serialization retry loop exhausted")
 
 
-async def get_account_or_404(session: SessionDep, account_id: UUID) -> FinancialAccount:
-    account = await session.get(FinancialAccount, account_id)
+async def get_account_or_404(
+    session: SessionDep,
+    account_id: UUID,
+    user_id: UUID,
+) -> FinancialAccount:
+    account = await session.scalar(
+        select(FinancialAccount).where(
+            FinancialAccount.id == account_id,
+            FinancialAccount.user_id == user_id,
+        )
+    )
     if account is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="account not found"
@@ -112,8 +121,9 @@ async def get_account_or_404(session: SessionDep, account_id: UUID) -> Financial
 async def create_account(
     payload: FinancialAccountCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> FinancialAccount:
-    account = FinancialAccount(**payload.model_dump())
+    account = FinancialAccount(**payload.model_dump(), user_id=current_user.id)
     session.add(account)
     await commit_or_conflict(
         session, "an account with this name and currency already exists"
@@ -125,6 +135,7 @@ async def create_account(
 @router.get("/accounts", response_model=FinancialAccountListResponse)
 async def list_accounts(
     session: SessionDep,
+    current_user: CurrentUserDep,
     account_type: AccountType | None = None,
     currency: str | None = Query(
         default=None,
@@ -135,7 +146,7 @@ async def list_accounts(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> FinancialAccountListResponse:
-    filters = []
+    filters = [FinancialAccount.user_id == current_user.id]
     if account_type is not None:
         filters.append(FinancialAccount.account_type == account_type)
     if currency is not None:
@@ -166,8 +177,12 @@ async def list_accounts(
 
 
 @router.get("/accounts/{account_id}", response_model=FinancialAccountResponse)
-async def get_account(account_id: UUID, session: SessionDep) -> FinancialAccount:
-    return await get_account_or_404(session, account_id)
+async def get_account(
+    account_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> FinancialAccount:
+    return await get_account_or_404(session, account_id, current_user.id)
 
 
 @router.patch("/accounts/{account_id}", response_model=FinancialAccountResponse)
@@ -175,8 +190,9 @@ async def update_account(
     account_id: UUID,
     payload: FinancialAccountUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> FinancialAccount:
-    account = await get_account_or_404(session, account_id)
+    account = await get_account_or_404(session, account_id, current_user.id)
     changes = payload.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(account, field, value)
@@ -193,15 +209,28 @@ async def update_account(
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_account(account_id: UUID, session: SessionDep) -> Response:
-    account = await get_account_or_404(session, account_id)
+async def delete_account(
+    account_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    account = await get_account_or_404(session, account_id, current_user.id)
     await session.delete(account)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def get_goal_or_404(session: SessionDep, goal_id: UUID) -> SavingsGoal:
-    goal = await session.get(SavingsGoal, goal_id)
+async def get_goal_or_404(
+    session: SessionDep,
+    goal_id: UUID,
+    user_id: UUID,
+) -> SavingsGoal:
+    goal = await session.scalar(
+        select(SavingsGoal).where(
+            SavingsGoal.id == goal_id,
+            SavingsGoal.user_id == user_id,
+        )
+    )
     if goal is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -213,8 +242,16 @@ async def get_goal_or_404(session: SessionDep, goal_id: UUID) -> SavingsGoal:
 async def get_contribution_or_404(
     session: SessionDep,
     contribution_id: UUID,
+    user_id: UUID,
 ) -> SavingsContribution:
-    contribution = await session.get(SavingsContribution, contribution_id)
+    contribution = await session.scalar(
+        select(SavingsContribution)
+        .join(SavingsGoal, SavingsGoal.id == SavingsContribution.goal_id)
+        .where(
+            SavingsContribution.id == contribution_id,
+            SavingsGoal.user_id == user_id,
+        )
+    )
     if contribution is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -259,8 +296,9 @@ def contribution_mutation_response(
 async def create_savings_goal(
     payload: SavingsGoalCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> SavingsGoal:
-    goal = SavingsGoal(**payload.model_dump())
+    goal = SavingsGoal(**payload.model_dump(), user_id=current_user.id)
     session.add(goal)
     await commit_or_conflict(
         session, "a savings goal with this name and currency already exists"
@@ -272,6 +310,7 @@ async def create_savings_goal(
 @router.get("/savings-goals", response_model=SavingsGoalListResponse)
 async def list_savings_goals(
     session: SessionDep,
+    current_user: CurrentUserDep,
     currency: str | None = Query(
         default=None,
         min_length=3,
@@ -281,7 +320,7 @@ async def list_savings_goals(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> SavingsGoalListResponse:
-    filters = []
+    filters = [SavingsGoal.user_id == current_user.id]
     if currency is not None:
         filters.append(SavingsGoal.currency == normalize_currency(currency))
     statement = (
@@ -309,8 +348,12 @@ async def list_savings_goals(
 
 
 @router.get("/savings-goals/{goal_id}", response_model=SavingsGoalResponse)
-async def get_savings_goal(goal_id: UUID, session: SessionDep) -> SavingsGoal:
-    return await get_goal_or_404(session, goal_id)
+async def get_savings_goal(
+    goal_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> SavingsGoal:
+    return await get_goal_or_404(session, goal_id, current_user.id)
 
 
 @router.patch("/savings-goals/{goal_id}", response_model=SavingsGoalResponse)
@@ -318,8 +361,9 @@ async def update_savings_goal(
     goal_id: UUID,
     payload: SavingsGoalUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> SavingsGoal:
-    goal = await get_goal_or_404(session, goal_id)
+    goal = await get_goal_or_404(session, goal_id, current_user.id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(goal, field, value)
     await commit_or_conflict(
@@ -330,8 +374,12 @@ async def update_savings_goal(
 
 
 @router.delete("/savings-goals/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_savings_goal(goal_id: UUID, session: SessionDep) -> Response:
-    goal = await get_goal_or_404(session, goal_id)
+async def delete_savings_goal(
+    goal_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    goal = await get_goal_or_404(session, goal_id, current_user.id)
     await session.delete(goal)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -346,9 +394,10 @@ async def create_savings_contribution(
     goal_id: UUID,
     payload: SavingsContributionCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> SavingsContributionMutationResponse:
     async def operation() -> tuple[SavingsContribution, SavingsGoal]:
-        goal = await get_goal_or_404(session, goal_id)
+        goal = await get_goal_or_404(session, goal_id, current_user.id)
         new_amount = goal.current_amount + contribution_delta(
             payload.kind,
             payload.amount,
@@ -376,12 +425,13 @@ async def create_savings_contribution(
 async def list_savings_contributions(
     goal_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
     start_date: date | None = None,
     end_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> SavingsContributionListResponse:
-    await get_goal_or_404(session, goal_id)
+    await get_goal_or_404(session, goal_id, current_user.id)
     validate_date_range(start_date, end_date)
 
     filters = [SavingsContribution.goal_id == goal_id]
@@ -422,8 +472,13 @@ async def list_savings_contributions(
 async def get_savings_contribution(
     contribution_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> SavingsContribution:
-    return await get_contribution_or_404(session, contribution_id)
+    return await get_contribution_or_404(
+        session,
+        contribution_id,
+        current_user.id,
+    )
 
 
 @router.patch(
@@ -434,10 +489,19 @@ async def update_savings_contribution(
     contribution_id: UUID,
     payload: SavingsContributionUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> SavingsContributionMutationResponse:
     async def operation() -> tuple[SavingsContribution, SavingsGoal]:
-        contribution = await get_contribution_or_404(session, contribution_id)
-        goal = await get_goal_or_404(session, contribution.goal_id)
+        contribution = await get_contribution_or_404(
+            session,
+            contribution_id,
+            current_user.id,
+        )
+        goal = await get_goal_or_404(
+            session,
+            contribution.goal_id,
+            current_user.id,
+        )
         changes = payload.model_dump(exclude_unset=True)
         new_kind = changes.get("kind", contribution.kind)
         new_contribution_amount = changes.get("amount", contribution.amount)
@@ -469,10 +533,19 @@ async def update_savings_contribution(
 async def delete_savings_contribution(
     contribution_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> Response:
     async def operation() -> Response:
-        contribution = await get_contribution_or_404(session, contribution_id)
-        goal = await get_goal_or_404(session, contribution.goal_id)
+        contribution = await get_contribution_or_404(
+            session,
+            contribution_id,
+            current_user.id,
+        )
+        goal = await get_goal_or_404(
+            session,
+            contribution.goal_id,
+            current_user.id,
+        )
         new_goal_amount = goal.current_amount - contribution.signed_amount
         if new_goal_amount < 0:
             raise HTTPException(
@@ -490,11 +563,16 @@ async def delete_savings_contribution(
     return await run_with_serialization_retry(session, operation)
 
 
-async def calculate_summary(session: SessionDep, currency: str) -> WealthSummary:
+async def calculate_summary(
+    session: SessionDep,
+    currency: str,
+    user_id: UUID,
+) -> WealthSummary:
     currency = normalize_currency(currency)
     totals_statement = (
         select(FinancialAccount.account_type, func.sum(FinancialAccount.balance))
         .where(
+            FinancialAccount.user_id == user_id,
             FinancialAccount.currency == currency,
             FinancialAccount.include_in_net_worth.is_(True),
         )
@@ -509,6 +587,7 @@ async def calculate_summary(session: SessionDep, currency: str) -> WealthSummary
 
     savings = await session.scalar(
         select(func.sum(FinancialAccount.balance)).where(
+            FinancialAccount.user_id == user_id,
             FinancialAccount.currency == currency,
             FinancialAccount.is_savings.is_(True),
         )
@@ -518,7 +597,10 @@ async def calculate_summary(session: SessionDep, currency: str) -> WealthSummary
             select(
                 func.sum(SavingsGoal.target_amount),
                 func.sum(SavingsGoal.current_amount),
-            ).where(SavingsGoal.currency == currency)
+            ).where(
+                SavingsGoal.user_id == user_id,
+                SavingsGoal.currency == currency,
+            )
         )
     ).one()
     return WealthSummary(
@@ -539,6 +621,7 @@ async def calculate_summary(session: SessionDep, currency: str) -> WealthSummary
 @router.get("/summary", response_model=WealthSummary)
 async def get_wealth_summary(
     session: SessionDep,
+    current_user: CurrentUserDep,
     currency: str = Query(
         default="USD",
         min_length=3,
@@ -546,7 +629,7 @@ async def get_wealth_summary(
         pattern=r"^[A-Za-z]{3}$",
     ),
 ) -> WealthSummary:
-    return await calculate_summary(session, currency)
+    return await calculate_summary(session, currency, current_user.id)
 
 
 @router.post(
@@ -557,9 +640,11 @@ async def get_wealth_summary(
 async def capture_net_worth_snapshot(
     payload: NetWorthSnapshotCapture,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> NetWorthSnapshot:
-    summary = await calculate_summary(session, payload.currency)
+    summary = await calculate_summary(session, payload.currency, current_user.id)
     snapshot = NetWorthSnapshot(
+        user_id=current_user.id,
         recorded_at=datetime.now(UTC),
         assets=summary.assets,
         liabilities=summary.liabilities,
@@ -578,6 +663,7 @@ async def capture_net_worth_snapshot(
 )
 async def list_net_worth_snapshots(
     session: SessionDep,
+    current_user: CurrentUserDep,
     currency: str | None = Query(
         default=None,
         min_length=3,
@@ -587,7 +673,7 @@ async def list_net_worth_snapshots(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> NetWorthSnapshotListResponse:
-    filters = []
+    filters = [NetWorthSnapshot.user_id == current_user.id]
     if currency is not None:
         filters.append(NetWorthSnapshot.currency == normalize_currency(currency))
     statement = (
@@ -621,8 +707,14 @@ async def list_net_worth_snapshots(
 async def get_net_worth_snapshot(
     snapshot_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> NetWorthSnapshot:
-    snapshot = await session.get(NetWorthSnapshot, snapshot_id)
+    snapshot = await session.scalar(
+        select(NetWorthSnapshot).where(
+            NetWorthSnapshot.id == snapshot_id,
+            NetWorthSnapshot.user_id == current_user.id,
+        )
+    )
     if snapshot is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -638,8 +730,14 @@ async def get_net_worth_snapshot(
 async def delete_net_worth_snapshot(
     snapshot_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> Response:
-    snapshot = await session.get(NetWorthSnapshot, snapshot_id)
+    snapshot = await session.scalar(
+        select(NetWorthSnapshot).where(
+            NetWorthSnapshot.id == snapshot_id,
+            NetWorthSnapshot.user_id == current_user.id,
+        )
+    )
     if snapshot is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import Base, TimestampMixin, UserOwnedMixin, UUIDPrimaryKeyMixin
 
 
 class AccountType(StrEnum):
@@ -30,7 +30,7 @@ class SavingsContributionKind(StrEnum):
     WITHDRAWAL = "withdrawal"
 
 
-class FinancialAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class FinancialAccount(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "financial_accounts"
     __table_args__ = (
         CheckConstraint("balance >= 0", name="balance_nonnegative"),
@@ -39,7 +39,12 @@ class FinancialAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "NOT is_savings OR account_type = 'asset'",
             name="savings_account_is_asset",
         ),
-        UniqueConstraint("name", "currency", name="uq_account_name_currency"),
+        UniqueConstraint(
+            "user_id",
+            "name",
+            "currency",
+            name="uq_account_name_currency",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -68,13 +73,18 @@ class FinancialAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
-class SavingsGoal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class SavingsGoal(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "savings_goals"
     __table_args__ = (
         CheckConstraint("target_amount > 0", name="target_amount_positive"),
         CheckConstraint("current_amount >= 0", name="current_amount_nonnegative"),
         CheckConstraint("length(currency) = 3", name="currency_three_chars"),
-        UniqueConstraint("name", "currency", name="uq_savings_goal_name_currency"),
+        UniqueConstraint(
+            "user_id",
+            "name",
+            "currency",
+            name="uq_savings_goal_name_currency",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -143,7 +153,7 @@ class SavingsContribution(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         return -self.amount
 
 
-class NetWorthSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class NetWorthSnapshot(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "net_worth_snapshots"
     __table_args__ = (
         CheckConstraint("assets >= 0", name="assets_nonnegative"),

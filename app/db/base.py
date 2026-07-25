@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import ClassVar
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, MetaData, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, MetaData, Uuid, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 NAMING_CONVENTION = {
@@ -23,6 +23,17 @@ class UUIDPrimaryKeyMixin:
         Uuid(as_uuid=True),
         primary_key=True,
         default=uuid4,
+    )
+
+
+class UserOwnedMixin:
+    # Nullable only so the authentication migration can preserve legacy
+    # single-user rows. Every API write supplies an authenticated user ID, and
+    # every API read filters by it, so unowned legacy rows are never exposed.
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
 
 

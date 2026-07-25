@@ -18,10 +18,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import Base, TimestampMixin, UserOwnedMixin, UUIDPrimaryKeyMixin
 
 
-class Workout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class Workout(UserOwnedMixin, UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "workouts"
     __table_args__ = (
         CheckConstraint(

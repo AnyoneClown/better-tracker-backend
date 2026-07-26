@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+services:
+  - type: web
+    name: better-tracker-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: /bin/sh /usr/local/bin/start-render
+    healthCheckPath: /readyz
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: PGSSLROOTCERT
+        value: /etc/ssl/certs/ca-certificates.crt
+      - key: DATABASE_ECHO
+        value: "false"
+      # The frontend proxies API calls server-to-server, so browsers do not
+      # need direct cross-origin access to this service.
+      - key: CORS_ORIGINS
+        value: "[]"
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      # Render generates independent base64-encoded 256-bit values, which are
+      # valid Fernet keys for encrypting stored bank tokens.
+      - key: MONOBANK_TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: PRIVATBANK_TOKEN_ENCRYPTION_KEY
+        generateValue: true

@@ -135,6 +135,28 @@ async def test_users_cannot_read_or_mutate_each_others_resources(
     assert hidden_workout_update.status_code == 404
     assert hidden_workout_delete.status_code == 404
 
+    second_transaction = await api_client.post(
+        "/api/v1/finance/transactions",
+        json={
+            "kind": "expense",
+            "amount": "12.00",
+            "category": "transport",
+            "occurred_on": "2026-07-26",
+        },
+        headers=second_user_headers,
+    )
+    assert second_transaction.status_code == 201
+    bulk_deleted = await api_client.delete(
+        "/api/v1/finance/transactions",
+        headers=second_user_headers,
+    )
+    assert bulk_deleted.status_code == 200
+    assert bulk_deleted.json() == {"deleted_count": 1}
+    owner_transaction = await api_client.get(
+        f"/api/v1/finance/transactions/{transaction.json()['id']}"
+    )
+    assert owner_transaction.status_code == 200
+
 
 async def test_lists_summaries_and_unique_values_are_scoped_per_user(
     api_client: AsyncClient,

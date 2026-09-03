@@ -437,11 +437,14 @@ async def run_monobank_sync(
             if connection is None:
                 return
             accounts = await synchronize_client_info(session, connection, client_info)
+            tracked_accounts = [account for account in accounts if account.is_tracked]
             connection.sync_progress_current = 0
             statement_ranges = statement_time_ranges(date_from, date_to)
-            connection.sync_progress_total = len(accounts) * len(statement_ranges)
+            connection.sync_progress_total = len(tracked_accounts) * len(
+                statement_ranges
+            )
             await session.commit()
-            account_ids = [account.id for account in accounts]
+            account_ids = [account.id for account in tracked_accounts]
 
         progress = 0
         statement_request_index = 0

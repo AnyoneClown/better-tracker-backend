@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
@@ -15,8 +15,12 @@ from app.models.finance import (
     TransactionKind,
     TransactionSource,
 )
-from app.models.monobank import MonobankAccount, MonobankJar
-from app.models.privatbank import PrivatBankAccount
+from app.models.monobank import (
+    MonobankAccount,
+    MonobankConnection,
+    MonobankJar,
+    MonobankSyncStatus,
+)
 from app.models.wealth import FinancialAccount, SavingsGoal
 from app.schemas.finance import (
     FinanceCategorySummary,
@@ -24,6 +28,7 @@ from app.schemas.finance import (
     FinancialTransactionCreate,
     FinancialTransactionListResponse,
     FinancialTransactionResponse,
+    FinancialTransactionsDeleteResponse,
     FinancialTransactionUpdate,
     MonthlyBudgetCreate,
     MonthlyBudgetListResponse,
@@ -292,6 +297,37 @@ async def list_transactions(
     )
 
 
+@router.delete(
+    "/transactions",
+    response_model=FinancialTransactionsDeleteResponse,
+)
+async def delete_all_transactions(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> FinancialTransactionsDeleteResponse:
+    monobank_sync_status = await session.scalar(
+        select(MonobankConnection.sync_status).where(
+            MonobankConnection.user_id == current_user.id
+        )
+    )
+    if monobank_sync_status == MonobankSyncStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Wait for active bank syncs to finish before deleting transactions.",
+        )
+
+    result = await session.execute(
+        delete(FinancialTransaction).where(
+            FinancialTransaction.user_id == current_user.id
+        )
+    )
+    deleted_count = int(getattr(result, "rowcount", 0) or 0)
+    await session.commit()
+    return FinancialTransactionsDeleteResponse(
+        deleted_count=max(deleted_count, 0),
+    )
+
+
 @router.get(
     "/transactions/{transaction_id}",
     response_model=FinancialTransactionResponse,
@@ -384,9 +420,7 @@ async def list_finance_currencies(
         (MonthlyBudget, MonthlyBudget.currency),
         (FinancialAccount, FinancialAccount.currency),
         (SavingsGoal, SavingsGoal.currency),
-        (MonobankAccount, MonobankAccount.currency),
         (MonobankJar, MonobankJar.currency),
-        (PrivatBankAccount, PrivatBankAccount.currency),
     )
     currencies: set[str] = set()
     for model, column in model_columns:
@@ -397,6 +431,18 @@ async def list_finance_currencies(
                 )
             ).all()
         )
+    currencies.update(
+        (
+            await session.scalars(
+                select(MonobankAccount.currency)
+                .where(
+                    MonobankAccount.user_id == current_user.id,
+                    MonobankAccount.is_tracked.is_(True),
+                )
+                .distinct()
+            )
+        ).all()
+    )
     return sorted(currencies, key=lambda currency: (currency != "UAH", currency))
 
 

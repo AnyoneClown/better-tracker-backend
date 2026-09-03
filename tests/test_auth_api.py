@@ -1,13 +1,18 @@
 from collections.abc import AsyncGenerator, Callable
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes import auth as auth_routes
+from app.core.config import settings
 from app.core.security import verify_password
 from app.models.user import User
+from app.schemas.auth import GoogleUserInfo
 
 VALID_PASSWORD = "StrongPassword1!"
 SessionOverride = Callable[[], AsyncGenerator[AsyncSession]]
@@ -151,6 +156,117 @@ async def test_user_can_login_and_get_current_profile(
     assert profile.status_code == 200, profile.text
     assert profile.json()["id"] == registration.json()["id"]
     assert profile.json()["email"] == "login.user@example.com"
+
+
+async def test_google_oauth_creates_and_reuses_account(
+    unauthenticated_api_client: AsyncClient,
+    sqlite_session_override: SessionOverride,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "google_oauth_client_id", "google-client-id")
+    monkeypatch.setattr(
+        settings,
+        "google_oauth_client_secret",
+        SecretStr("google-client-secret"),
+    )
+    redirect_uri = "http://localhost:43127/api/auth/google"
+    state = "s" * 32
+    code_challenge = "c" * 43
+    authorization = await unauthenticated_api_client.get(
+        "/api/v1/auth/google/authorize",
+        params={
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_challenge": code_challenge,
+        },
+    )
+    assert authorization.status_code == 200, authorization.text
+    authorization_url = urlparse(authorization.json()["authorization_url"])
+    parameters = parse_qs(authorization_url.query)
+    assert authorization_url.netloc == "accounts.google.com"
+    assert parameters["client_id"] == ["google-client-id"]
+    assert parameters["redirect_uri"] == [redirect_uri]
+    assert parameters["scope"] == ["openid email"]
+    assert parameters["state"] == [state]
+    assert parameters["code_challenge"] == [code_challenge]
+    assert parameters["code_challenge_method"] == ["S256"]
+
+    async def fake_user_info(_: object) -> GoogleUserInfo:
+        return GoogleUserInfo(
+            sub="google-user-123",
+            email="person@gmail.com",
+            email_verified=True,
+        )
+
+    monkeypatch.setattr(auth_routes, "fetch_google_user_info", fake_user_info)
+    exchange_payload = {
+        "code": "authorization-code",
+        "redirect_uri": redirect_uri,
+        "code_verifier": "v" * 43,
+    }
+    first = await unauthenticated_api_client.post(
+        "/api/v1/auth/google/exchange",
+        json=exchange_payload,
+    )
+    second = await unauthenticated_api_client.post(
+        "/api/v1/auth/google/exchange",
+        json=exchange_payload,
+    )
+    assert first.status_code == second.status_code == 200
+
+    first_profile = await unauthenticated_api_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+    )
+    second_profile = await unauthenticated_api_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {second.json()['access_token']}"},
+    )
+    assert first_profile.json()["id"] == second_profile.json()["id"]
+    assert first_profile.json()["email"] == "person@gmail.com"
+
+    session_iterator = sqlite_session_override()
+    session = await anext(session_iterator)
+    try:
+        users = list((await session.scalars(select(User))).all())
+        assert len(users) == 1
+        assert users[0].google_subject == "google-user-123"
+    finally:
+        await session_iterator.aclose()
+
+
+async def test_google_oauth_does_not_auto_link_third_party_email(
+    unauthenticated_api_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registration = await unauthenticated_api_client.post(
+        "/api/v1/auth/register",
+        json={"email": "person@example.com", "password": VALID_PASSWORD},
+    )
+    assert registration.status_code == 201
+
+    async def fake_user_info(_: object) -> GoogleUserInfo:
+        return GoogleUserInfo(
+            sub="different-google-user",
+            email="person@example.com",
+            email_verified=True,
+        )
+
+    monkeypatch.setattr(auth_routes, "fetch_google_user_info", fake_user_info)
+    response = await unauthenticated_api_client.post(
+        "/api/v1/auth/google/exchange",
+        json={
+            "code": "authorization-code",
+            "redirect_uri": "http://localhost:43127/api/auth/google",
+            "code_verifier": "v" * 43,
+        },
+    )
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": (
+            "An account already exists for this email. Sign in with your password."
+        )
+    }
 
 
 @pytest.mark.parametrize(

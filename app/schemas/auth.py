@@ -1,6 +1,7 @@
 from typing import Annotated, Literal
 
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -80,3 +81,26 @@ class AccessTokenResponse(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
+
+
+class GoogleAuthorizationResponse(BaseModel):
+    authorization_url: AnyHttpUrl
+
+
+class GoogleCodeExchange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=4096)
+    redirect_uri: AnyHttpUrl
+    code_verifier: str = Field(
+        min_length=43,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+
+
+class GoogleUserInfo(BaseModel):
+    sub: str = Field(min_length=1, max_length=255)
+    email: NormalizedEmail
+    email_verified: bool
+    hd: str | None = Field(default=None, max_length=253)

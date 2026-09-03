@@ -11,7 +11,6 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
 from app.models.monobank import MonobankAccount, MonobankJar
-from app.models.privatbank import PrivatBankAccount
 from app.models.wealth import (
     AccountType,
     FinancialAccount,
@@ -593,6 +592,7 @@ async def calculate_summary(
                 select(MonobankAccount.balance).where(
                     MonobankAccount.user_id == user_id,
                     MonobankAccount.currency == currency,
+                    MonobankAccount.is_tracked.is_(True),
                 )
             )
         ).all()
@@ -614,25 +614,6 @@ async def calculate_summary(
     assets += sum((Decimal(str(balance)) for balance in jar_balances), Decimal("0"))
     liabilities += sum(
         (abs(Decimal(str(balance))) for balance in monobank_balances if balance < 0),
-        Decimal("0"),
-    )
-
-    privatbank_balances = list(
-        (
-            await session.scalars(
-                select(PrivatBankAccount.balance).where(
-                    PrivatBankAccount.user_id == user_id,
-                    PrivatBankAccount.currency == currency,
-                )
-            )
-        ).all()
-    )
-    assets += sum(
-        (Decimal(str(balance)) for balance in privatbank_balances if balance > 0),
-        Decimal("0"),
-    )
-    liabilities += sum(
-        (abs(Decimal(str(balance))) for balance in privatbank_balances if balance < 0),
         Decimal("0"),
     )
 

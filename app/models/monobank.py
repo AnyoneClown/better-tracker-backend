@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -138,6 +139,9 @@ class MonobankAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     iban: Mapped[str | None] = mapped_column(String(34), nullable=True)
     cashback_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    is_tracked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     connection: Mapped[MonobankConnection] = relationship(back_populates="accounts")
 

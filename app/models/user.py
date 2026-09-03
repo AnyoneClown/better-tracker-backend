@@ -13,6 +13,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     email: Mapped[str] = mapped_column(String(254), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    google_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         default=True,

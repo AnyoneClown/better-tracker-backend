@@ -5,13 +5,14 @@ x-app-environment: &app-environment
   ENVIRONMENT: "${ENVIRONMENT:-development}"
   DATABASE_URL: "${COMPOSE_DATABASE_URL:-cockroachdb+asyncpg://root@db:26257/tracker}"
   DATABASE_ECHO: "${DATABASE_ECHO:-false}"
-  CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000"]}'
+  CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:43127"]}'
   JWT_SECRET_KEY: "${JWT_SECRET_KEY:-development-only-secret-change-before-running-in-production}"
   JWT_ISSUER: "${JWT_ISSUER:-better-tracker-api}"
   JWT_AUDIENCE: "${JWT_AUDIENCE:-better-tracker-api}"
   ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-30}"
+  GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+  GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
   MONOBANK_TOKEN_ENCRYPTION_KEY: "${MONOBANK_TOKEN_ENCRYPTION_KEY:-YmV0dGVyLXRyYWNrZXItbW9ub2JhbmstZGV2LWtleSE=}"
-  PRIVATBANK_TOKEN_ENCRYPTION_KEY: "${PRIVATBANK_TOKEN_ENCRYPTION_KEY:-FU0XZuwTkrhstlI0PJ2amnWd1azqg50-mdooWQogWYI=}"
 
 services:
   db:

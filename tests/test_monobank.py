@@ -203,6 +203,7 @@ async def test_connect_encrypts_token_and_returns_only_safe_live_state(
         assert response["sync_status"] == "idle"
         assert len(response["accounts"]) == 3
         assert len(response["jars"]) == 1
+        assert all(account["is_tracked"] is True for account in response["accounts"])
         assert Decimal(response["accounts"][0]["credit_limit"]) >= 0
         assert Decimal(response["jars"][0]["progress_percent"]) == Decimal("25")
         assert all(item["external_id"] != "managed" for item in response["accounts"])
@@ -220,6 +221,69 @@ async def test_connect_encrypts_token_and_returns_only_safe_live_state(
         )
         assert rejected.status_code == 403
         assert "invalid-personal-token" not in rejected.text
+    finally:
+        app.dependency_overrides.pop(get_monobank_client, None)
+
+
+async def test_sync_imports_only_tracked_cards(
+    api_client: AsyncClient,
+) -> None:
+    state = ProviderState()
+    install_provider(state)
+    try:
+        connection = await connect(api_client)
+        accounts = {
+            account["external_id"]: account for account in connection["accounts"]
+        }
+
+        for external_id in ("card-debt", "card-usd"):
+            disabled = await api_client.patch(
+                f"/api/v1/integrations/monobank/accounts/{accounts[external_id]['id']}",
+                json={"is_tracked": False},
+            )
+            assert disabled.status_code == 200, disabled.text
+            assert disabled.json()["is_tracked"] is False
+
+        refreshed = await api_client.get("/api/v1/integrations/monobank/connection")
+        tracked_external_ids = {
+            account["external_id"]
+            for account in refreshed.json()["accounts"]
+            if account["is_tracked"]
+        }
+        assert tracked_external_ids == {"card-a"}
+
+        wealth = await api_client.get("/api/v1/wealth/summary?currency=UAH")
+        assert Decimal(wealth.json()["assets"]) == Decimal("1250")
+        assert Decimal(wealth.json()["liabilities"]) == 0
+        currencies = await api_client.get("/api/v1/finance/currencies")
+        assert currencies.json() == ["UAH"]
+
+        state.calls.clear()
+        accepted = await api_client.post("/api/v1/integrations/monobank/sync")
+        assert accepted.status_code == 202, accepted.text
+        assert accepted.json()["sync_progress_total"] == 1
+        finished = await wait_for_sync(api_client)
+        assert finished["sync_progress_current"] == 1
+        assert finished["sync_progress_total"] == 1
+        statement_calls = [
+            path for path in state.calls if path.startswith("/personal/statement/")
+        ]
+        assert len(statement_calls) == 1
+        assert statement_calls[0].startswith("/personal/statement/card-a/")
+
+        transactions = await api_client.get(
+            "/api/v1/finance/transactions?source=monobank&limit=100"
+        )
+        assert transactions.json()["total"] == 2
+
+        disabled_last = await api_client.patch(
+            f"/api/v1/integrations/monobank/accounts/{accounts['card-a']['id']}",
+            json={"is_tracked": False},
+        )
+        assert disabled_last.status_code == 200
+        rejected = await api_client.post("/api/v1/integrations/monobank/sync")
+        assert rejected.status_code == 422
+        assert "at least one" in rejected.json()["detail"].lower()
     finally:
         app.dependency_overrides.pop(get_monobank_client, None)
 
@@ -312,6 +376,10 @@ async def test_sync_is_idempotent_preserves_overrides_and_updates_provider_field
         )
         assert Decimal(summary.json()["total_income"]) == Decimal("1000")
         assert Decimal(summary.json()["total_expenses"]) == 0
+
+        deleted_all = await api_client.delete("/api/v1/finance/transactions")
+        assert deleted_all.status_code == 200, deleted_all.text
+        assert deleted_all.json() == {"deleted_count": 2}
     finally:
         app.dependency_overrides.pop(get_monobank_client, None)
 
@@ -480,6 +548,11 @@ async def test_wealth_currencies_interruption_conflict_and_disconnect(
                 f"/api/v1/integrations/monobank/accounts/{account_id}/transactions"
             )
             assert delete_conflict.status_code == 409
+            tracking_conflict = await api_client.patch(
+                f"/api/v1/integrations/monobank/accounts/{account_id}",
+                json={"is_tracked": False},
+            )
+            assert tracking_conflict.status_code == 409
             await mark_interrupted_monobank_syncs(factory)
 
         interrupted = await api_client.get("/api/v1/integrations/monobank/connection")
@@ -557,6 +630,13 @@ async def test_connections_and_imports_are_isolated_between_users(
         assert {
             item["external_id"] for item in second_connection.json()["accounts"]
         } == {"card-b"}
+        owner_account_id = owner_connection.json()["accounts"][0]["id"]
+        hidden_tracking_update = await api_client.patch(
+            f"/api/v1/integrations/monobank/accounts/{owner_account_id}",
+            json={"is_tracked": False},
+            headers=second_headers,
+        )
+        assert hidden_tracking_update.status_code == 404
 
         await api_client.post("/api/v1/integrations/monobank/sync")
         await wait_for_sync(api_client)

@@ -21,6 +21,8 @@ def test_openapi_exposes_each_tracker_domain() -> None:
     expected_paths = {
         "/api/v1/auth/register",
         "/api/v1/auth/login",
+        "/api/v1/auth/google/authorize",
+        "/api/v1/auth/google/exchange",
         "/api/v1/auth/me",
         "/api/v1/workouts",
         "/api/v1/finance/transactions",
@@ -29,10 +31,8 @@ def test_openapi_exposes_each_tracker_domain() -> None:
         "/api/v1/finance/currencies",
         "/api/v1/integrations/monobank/connection",
         "/api/v1/integrations/monobank/sync",
+        "/api/v1/integrations/monobank/accounts/{account_id}",
         "/api/v1/integrations/monobank/accounts/{account_id}/transactions",
-        "/api/v1/integrations/privatbank/connection",
-        "/api/v1/integrations/privatbank/sync",
-        "/api/v1/integrations/privatbank/accounts/{account_id}/transactions",
         "/api/v1/wealth/accounts",
         "/api/v1/wealth/savings-goals",
         "/api/v1/wealth/net-worth-snapshots/capture",
@@ -42,6 +42,7 @@ def test_openapi_exposes_each_tracker_domain() -> None:
     }
 
     assert expected_paths <= set(paths)
+    assert not any("privatbank" in path for path in paths)
     assert schema["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == ("bearer")
 
     protected_prefixes = (

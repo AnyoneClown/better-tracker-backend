@@ -105,6 +105,10 @@ class FinancialTransactionListResponse(BaseModel):
     limit: int
 
 
+class FinancialTransactionsDeleteResponse(BaseModel):
+    deleted_count: int
+
+
 class MonthlyBudgetCreate(FinanceInput):
     year: int = Field(ge=1, le=9999)
     month: int = Field(ge=1, le=12)

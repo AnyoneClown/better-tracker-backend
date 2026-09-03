@@ -29,6 +29,8 @@ from app.models.monobank import (
     MonobankSyncStatus,
 )
 from app.schemas.monobank import (
+    MonobankAccountResponse,
+    MonobankAccountUpdate,
     MonobankConnectionCreate,
     MonobankConnectionResponse,
     MonobankSyncAccepted,
@@ -186,8 +188,14 @@ async def start_monobank_sync(
         .where(
             MonobankAccount.connection_id == connection.id,
             MonobankAccount.user_id == current_user.id,
+            MonobankAccount.is_tracked.is_(True),
         )
     )
+    if not account_count:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Select at least one Monobank card to track before syncing.",
+        )
     started = await session.scalar(
         update(MonobankConnection)
         .where(
@@ -231,6 +239,48 @@ async def start_monobank_sync(
         date_from=date_from,
         date_to=date_to,
     )
+
+
+@router.patch(
+    "/accounts/{account_id}",
+    response_model=MonobankAccountResponse,
+)
+async def update_monobank_account(
+    account_id: UUID,
+    payload: MonobankAccountUpdate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> MonobankAccount:
+    account = await session.scalar(
+        select(MonobankAccount).where(
+            MonobankAccount.id == account_id,
+            MonobankAccount.user_id == current_user.id,
+        )
+    )
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Monobank account not found.",
+        )
+    connection_status = await session.scalar(
+        select(MonobankConnection.sync_status).where(
+            MonobankConnection.id == account.connection_id,
+            MonobankConnection.user_id == current_user.id,
+        )
+    )
+    if connection_status == MonobankSyncStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Wait for the active Monobank sync to finish before changing "
+                "tracked cards."
+            ),
+        )
+
+    account.is_tracked = payload.is_tracked
+    await session.commit()
+    await session.refresh(account)
+    return account
 
 
 @router.delete(

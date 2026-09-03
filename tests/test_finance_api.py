@@ -120,6 +120,34 @@ async def test_transaction_crud_filters_and_pagination(api_client: AsyncClient) 
     ).status_code == 404
 
 
+async def test_delete_all_transactions_is_idempotent(api_client: AsyncClient) -> None:
+    for transaction in (
+        ("income", "5000.00", "salary", "2026-07-01", "USD"),
+        ("expense", "200.10", "food", "2026-07-10", "USD"),
+        ("expense", "300.00", "travel", "2026-06-30", "EUR"),
+    ):
+        await create_transaction(
+            api_client,
+            kind=transaction[0],
+            amount=transaction[1],
+            category=transaction[2],
+            occurred_on=transaction[3],
+            currency=transaction[4],
+        )
+
+    deleted = await api_client.delete("/api/v1/finance/transactions")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"deleted_count": 3}
+
+    remaining = await api_client.get("/api/v1/finance/transactions")
+    assert remaining.status_code == 200
+    assert remaining.json()["total"] == 0
+
+    deleted_again = await api_client.delete("/api/v1/finance/transactions")
+    assert deleted_again.status_code == 200
+    assert deleted_again.json() == {"deleted_count": 0}
+
+
 async def test_budget_crud_filters_and_pagination(api_client: AsyncClient) -> None:
     july_food = await create_budget(
         api_client,

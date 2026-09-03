@@ -49,7 +49,7 @@ def test_settings_require_a_strong_non_default_production_secret() -> None:
         Settings(_env_file=None, monobank_token_encryption_key="not-a-fernet-key")
 
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, privatbank_token_encryption_key="not-a-fernet-key")
+        Settings(_env_file=None, google_oauth_client_id="client-id")
 
     with pytest.raises(ValidationError):
         Settings(
@@ -63,6 +63,5 @@ def test_settings_require_a_strong_non_default_production_secret() -> None:
         environment="production",
         jwt_secret_key="a-production-secret-with-at-least-32-characters",
         monobank_token_encryption_key=Fernet.generate_key().decode("ascii"),
-        privatbank_token_encryption_key=Fernet.generate_key().decode("ascii"),
     )
     assert production_settings.environment == "production"

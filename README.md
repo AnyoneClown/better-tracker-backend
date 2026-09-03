@@ -150,28 +150,25 @@ Settings are read from environment variables and, for local commands, `.env`.
 | `DATABASE_URL` | `cockroachdb+asyncpg://root@localhost:26257/tracker` | Database URL used by a host-run API and Alembic. |
 | `COMPOSE_DATABASE_URL` | `cockroachdb+asyncpg://root@db:26257/tracker` | URL that Compose maps to `DATABASE_URL` inside app containers. |
 | `DATABASE_ECHO` | `false` | Set to `true` to log generated SQL. |
-| `CORS_ORIGINS` | `["http://localhost:3000"]` | JSON array of allowed frontend origins. |
+| `CORS_ORIGINS` | `["http://localhost:43127"]` | JSON array of allowed frontend origins. |
 | `JWT_SECRET_KEY` | Development-only value | Secret used to sign access tokens. Set a random value of at least 32 characters; the development default is rejected outside development/test. |
 | `JWT_ISSUER` | `better-tracker-api` | Required JWT issuer claim. |
 | `JWT_AUDIENCE` | `better-tracker-api` | Required JWT audience claim. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access-token lifetime, from 1 minute to 24 hours. |
+| `GOOGLE_OAUTH_CLIENT_ID` | Unset | Google OAuth web client ID. Set together with the client secret to enable Google sign-in. |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Unset | Google OAuth web client secret. |
 | `MONOBANK_TOKEN_ENCRYPTION_KEY` | Development-only value | Fernet key used only to encrypt Monobank Personal API tokens at rest. Generate a distinct production key and keep it in secret storage. |
-| `PRIVATBANK_TOKEN_ENCRYPTION_KEY` | Development-only value | Separate Fernet key used only to encrypt Privat24 Business API tokens at rest. Generate a distinct production key and keep it in secret storage. |
 
-Generate two production Fernet keys after installing the project, then store
-the outputs separately as `MONOBANK_TOKEN_ENCRYPTION_KEY` and
-`PRIVATBANK_TOKEN_ENCRYPTION_KEY`:
+Generate a production Fernet key after installing the project, then store it as
+`MONOBANK_TOKEN_ENCRYPTION_KEY`:
 
 ```bash
 uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 ```
 
-Run the command twice; do not reuse one bank's key for the other bank.
-
-Changing or losing either key makes connections encrypted with that key
-unreadable; users must reconnect the affected bank. Checked-in values are for
-local development only and are rejected when `ENVIRONMENT` is neither
-`development` nor `test`.
+Changing or losing the key makes encrypted connections unreadable; users must
+reconnect the bank. The checked-in value is for local development only and is
+rejected when `ENVIRONMENT` is neither `development` nor `test`.
 
 ## API overview
 
@@ -187,6 +184,11 @@ complete request and response schemas.
 - `POST /api/v1/auth/login` — exchange an email address and password for a
   signed access token. Invalid email/password combinations return the same
   generic `401 Unauthorized` response.
+- `GET /api/v1/auth/google/authorize` — build a Google authorization URL for a
+  frontend-supplied callback, state, and S256 PKCE challenge.
+- `POST /api/v1/auth/google/exchange` — exchange a Google authorization code,
+  verify the OpenID profile, create or reuse the linked user, and return the
+  same Better Tracker access token as password login.
 - `GET /api/v1/auth/me` — return the active user represented by a bearer token.
 
 All workout, finance, wealth, and health routes require
@@ -221,6 +223,9 @@ by that token's user; another user's resource identifier returns `404 Not Found`
 - `POST|GET /api/v1/finance/transactions` — create or list transactions. List
   filters: `kind` (`income` or `expense`), `category`, `currency`, `start_date`,
   `end_date`, `offset`, and `limit`.
+- `DELETE /api/v1/finance/transactions` — delete all of the authenticated
+  user's manual and imported transactions across every period and currency.
+  Active bank syncs must finish first; a later sync can re-import bank data.
 - `GET|PATCH|DELETE /api/v1/finance/transactions/{transaction_id}` — transaction
   detail and mutations.
 - `POST|GET /api/v1/finance/budgets` — create or list category budgets. List
@@ -234,11 +239,11 @@ caller sends variants such as `Food`, `food`, or ` food `.
 
 Pending imported operations and transactions explicitly excluded by a user
 stay visible in the ledger but do not contribute to cash-flow summaries.
-Manual transactions remain fully editable and deletable. Imported Monobank and
-PrivatBank rows only allow category and summary-exclusion changes; their
-bank-supplied fields are read-only. Users can bulk-delete every imported row
-for one connected bank account; manual rows and other accounts are unaffected,
-and a later sync can import deleted provider rows again.
+Manual transactions remain fully editable and deletable. Imported Monobank rows
+only allow category and summary-exclusion changes; their bank-supplied fields
+are read-only. Users can bulk-delete every imported row for one connected bank
+account; manual rows and other accounts are unaffected, and a later sync can
+import deleted provider rows again.
 
 ### Monobank Personal API
 
@@ -246,6 +251,8 @@ and a later sync can import deleted provider rows again.
   encrypt it with Fernet, and store the current client, card, and jar state.
 - `GET /api/v1/integrations/monobank/connection` — return connection status,
   progress, cards, and jars. The token and ciphertext are never returned.
+- `PATCH /api/v1/integrations/monobank/accounts/{account_id}` — enable or disable
+  tracking for one card. Tracking changes are rejected while a sync is active.
 - `DELETE /api/v1/integrations/monobank/connection` — delete credentials and
   live card/jar state while retaining previously imported transactions.
 - `POST /api/v1/integrations/monobank/sync` — start a background import and
@@ -258,11 +265,13 @@ and a later sync can import deleted provider rows again.
 - `GET /api/v1/finance/currencies` — list currencies found in the authenticated
   user's manual and imported money data, with UAH first when present.
 
-Sync refreshes `client-info`, then imports the selected inclusive period from
-each personal card. Periods longer than 31 calendar days are split into safe
-statement batches. Jar statements and `managedClients` are deliberately
-ignored. Every statement request runs sequentially with a 61-second delay to
-respect Monobank's rate limit, and progress is committed after each batch.
+Sync refreshes `client-info`, then imports the selected inclusive period only
+from cards marked for tracking. Tracked card balances contribute to wealth
+totals; untracked cards remain visible in connection state so they can be
+re-enabled. Periods longer than 31 calendar days are split into safe statement
+batches. Jar statements and `managedClients` are deliberately ignored. Every
+statement request runs sequentially with a 61-second delay to respect
+Monobank's rate limit, and progress is committed after each batch.
 Repeated syncs upsert the provider transaction ID, refresh pending/provider
 fields, and retain category overrides and exclusions. Positive card balances
 and jars contribute to assets, negative card balances contribute to liabilities
@@ -276,44 +285,6 @@ use Monobank's Provider API before offering Better Tracker to unrelated users.
 The v1 background task assumes one Uvicorn worker; multi-worker or scale-out
 deployments need a durable external job queue. Sync is manual—there is no
 scheduler or webhook.
-
-### PrivatBank FOP API
-
-- `POST /api/v1/integrations/privatbank/connection` — validate a Privat24 for
-  Business API token through read-only statement methods, encrypt it with a
-  dedicated Fernet key, and store current FOP account balances.
-- `GET /api/v1/integrations/privatbank/connection` — return safe connection,
-  progress, and account state. The token and ciphertext are never returned.
-- `DELETE /api/v1/integrations/privatbank/connection` — delete credentials and
-  live account state while retaining already imported transactions.
-- `POST /api/v1/integrations/privatbank/sync` — return `202 Accepted` and import
-  an inclusive `date_from`/`date_to` period in the background. Without a body,
-  the latest 31 calendar days are used. A second active sync returns `409`.
-- `DELETE /api/v1/integrations/privatbank/accounts/{account_id}/transactions` —
-  delete only that authenticated user's imported transactions for one FOP
-  account. Deletion is rejected while its sync is active.
-
-The integration uses only the official AutoClient v3 GET endpoints for server
-settings, balances, and transactions. It follows statement pagination via
-`followId`, treats the documented `REF + REFN` pair as the provider transaction
-identifier, and commits progress after every account. Repeated syncs update
-provider fields without duplicates and retain the user's category override and
-summary exclusion. Non-booked operations remain visible as pending and do not
-affect summaries. Positive account balances contribute to assets; negative
-balances contribute to liabilities by absolute value. There is no FX
-conversion.
-
-Create the token in Privat24 for Business under **Accounting and reports →
-Integration (AutoClient) → API**. In **Service restrictions**, enable only
-**Get account balances and transactions** so the token cannot create payments.
-Better Tracker implements no provider calls for payments, invoices, payroll,
-or document writes. See the
-[official PrivatBank AutoClient API v3 documentation](https://docs.google.com/document/d/e/2PACX-1vTtKvGa3P4E-lDqLg3bHRF6Wi9S7GIjSMFEFxII5qQZBGxuTXs25hQNiUU1hMZQhOyx6BNvIZ1bVKSr/pub).
-The integration is intentionally limited to FOP/business accounts; personal
-Privat24 cards are not supported.
-
-Like the Monobank worker, this background task assumes one Uvicorn worker and
-manual sync. A multi-worker deployment needs an external durable job queue.
 
 ### Wealth, savings, and net worth
 

@@ -44,6 +44,13 @@ class MonobankAccountResponse(EntityResponse):
     masked_pan: list[str]
     iban: str | None
     cashback_type: str | None
+    is_tracked: bool
+
+
+class MonobankAccountUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_tracked: bool
 
 
 class MonobankJarResponse(EntityResponse):

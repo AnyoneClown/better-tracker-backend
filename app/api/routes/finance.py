@@ -9,6 +9,7 @@ from sqlalchemy import ColumnElement, Select, delete, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
+from app.cache import cache_response
 from app.models.finance import (
     FinancialTransaction,
     MonthlyBudget,
@@ -130,6 +131,7 @@ def _transaction_is_visible(user_id: UUID) -> ColumnElement[bool]:
 
 
 @router.get("/summary", response_model=FinanceSummaryResponse)
+@cache_response
 async def get_finance_summary(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -241,6 +243,7 @@ async def create_transaction(
 
 
 @router.get("/transactions", response_model=FinancialTransactionListResponse)
+@cache_response
 async def list_transactions(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -347,6 +350,7 @@ async def delete_all_transactions(
     "/transactions/{transaction_id}",
     response_model=FinancialTransactionResponse,
 )
+@cache_response
 async def get_transaction(
     transaction_id: UUID,
     session: SessionDep,
@@ -426,6 +430,7 @@ async def delete_transaction(
 
 
 @router.get("/currencies", response_model=list[str])
+@cache_response
 async def list_finance_currencies(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -504,6 +509,7 @@ async def create_budget(
 
 
 @router.get("/budgets", response_model=MonthlyBudgetListResponse)
+@cache_response
 async def list_budgets(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -557,6 +563,7 @@ async def list_budgets(
 
 
 @router.get("/budgets/{budget_id}", response_model=MonthlyBudgetResponse)
+@cache_response
 async def get_budget(
     budget_id: UUID,
     session: SessionDep,

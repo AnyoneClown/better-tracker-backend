@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
+from app.cache import cache_response
 from app.models.monobank import MonobankAccount, MonobankJar
 from app.models.wealth import (
     AccountType,
@@ -134,6 +135,7 @@ async def create_account(
 
 
 @router.get("/accounts", response_model=FinancialAccountListResponse)
+@cache_response
 async def list_accounts(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -178,6 +180,7 @@ async def list_accounts(
 
 
 @router.get("/accounts/{account_id}", response_model=FinancialAccountResponse)
+@cache_response
 async def get_account(
     account_id: UUID,
     session: SessionDep,
@@ -309,6 +312,7 @@ async def create_savings_goal(
 
 
 @router.get("/savings-goals", response_model=SavingsGoalListResponse)
+@cache_response
 async def list_savings_goals(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -349,6 +353,7 @@ async def list_savings_goals(
 
 
 @router.get("/savings-goals/{goal_id}", response_model=SavingsGoalResponse)
+@cache_response
 async def get_savings_goal(
     goal_id: UUID,
     session: SessionDep,
@@ -423,6 +428,7 @@ async def create_savings_contribution(
     "/savings-goals/{goal_id}/contributions",
     response_model=SavingsContributionListResponse,
 )
+@cache_response
 async def list_savings_contributions(
     goal_id: UUID,
     session: SessionDep,
@@ -470,6 +476,7 @@ async def list_savings_contributions(
     "/savings-contributions/{contribution_id}",
     response_model=SavingsContributionResponse,
 )
+@cache_response
 async def get_savings_contribution(
     contribution_id: UUID,
     session: SessionDep,
@@ -656,6 +663,7 @@ async def calculate_summary(
 
 
 @router.get("/summary", response_model=WealthSummary)
+@cache_response
 async def get_wealth_summary(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -698,6 +706,7 @@ async def capture_net_worth_snapshot(
     "/net-worth-snapshots",
     response_model=NetWorthSnapshotListResponse,
 )
+@cache_response
 async def list_net_worth_snapshots(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -741,6 +750,7 @@ async def list_net_worth_snapshots(
     "/net-worth-snapshots/{snapshot_id}",
     response_model=NetWorthSnapshotResponse,
 )
+@cache_response
 async def get_net_worth_snapshot(
     snapshot_id: UUID,
     session: SessionDep,

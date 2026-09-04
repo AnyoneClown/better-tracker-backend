@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str = "cockroachdb+asyncpg://root@localhost:26257/tracker"
     database_echo: bool = False
+    redis_url: str | None = None
+    cache_ttl_seconds: int = Field(default=300, ge=1, le=86400)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:43127"])
     jwt_secret_key: SecretStr = Field(
         default=SecretStr(DEVELOPMENT_JWT_SECRET),

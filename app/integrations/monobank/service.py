@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.cache import invalidate_user_cache
 from app.integrations.monobank.client import MonobankAPIError, MonobankClient
 from app.integrations.monobank.crypto import (
     MonobankTokenDecryptionError,
@@ -444,6 +445,7 @@ async def run_monobank_sync(
                 statement_ranges
             )
             await session.commit()
+            await invalidate_user_cache(user_id)
             account_ids = [account.id for account in tracked_accounts]
 
         progress = 0
@@ -492,6 +494,7 @@ async def run_monobank_sync(
                     progress += 1
                     connection.sync_progress_current = progress
                     await session.commit()
+                    await invalidate_user_cache(user_id)
 
         async with session_factory() as session:
             await session.execute(
@@ -509,6 +512,7 @@ async def run_monobank_sync(
                 )
             )
             await session.commit()
+            await invalidate_user_cache(user_id)
     except asyncio.CancelledError:
         raise
     except (MonobankAPIError, MonobankTokenDecryptionError) as exc:
@@ -548,6 +552,7 @@ async def _mark_sync_failed(
             )
         )
         await session.commit()
+        await invalidate_user_cache(user_id)
 
 
 def schedule_monobank_sync(
@@ -599,13 +604,22 @@ async def mark_interrupted_monobank_syncs(
     session_factory: BackgroundSessionFactory,
 ) -> None:
     async with session_factory() as session:
-        await session.execute(
-            update(MonobankConnection)
-            .where(MonobankConnection.sync_status == MonobankSyncStatus.RUNNING)
-            .values(
-                sync_status=MonobankSyncStatus.FAILED,
-                sync_error="Sync interrupted by backend restart.",
-                last_sync_completed_at=datetime.now(UTC),
-            )
+        user_ids = set(
+            (
+                await session.scalars(
+                    update(MonobankConnection)
+                    .where(
+                        MonobankConnection.sync_status == MonobankSyncStatus.RUNNING
+                    )
+                    .values(
+                        sync_status=MonobankSyncStatus.FAILED,
+                        sync_error="Sync interrupted by backend restart.",
+                        last_sync_completed_at=datetime.now(UTC),
+                    )
+                    .returning(MonobankConnection.user_id)
+                )
+            ).all()
         )
         await session.commit()
+    for user_id in user_ids:
+        await invalidate_user_cache(user_id)

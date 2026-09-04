@@ -5,6 +5,8 @@ x-app-environment: &app-environment
   ENVIRONMENT: "${ENVIRONMENT:-development}"
   DATABASE_URL: "${COMPOSE_DATABASE_URL:-cockroachdb+asyncpg://root@db:26257/tracker}"
   DATABASE_ECHO: "${DATABASE_ECHO:-false}"
+  REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+  CACHE_TTL_SECONDS: "${CACHE_TTL_SECONDS:-300}"
   CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:43127"]}'
   JWT_SECRET_KEY: "${JWT_SECRET_KEY:-development-only-secret-change-before-running-in-production}"
   JWT_ISSUER: "${JWT_ISSUER:-better-tracker-api}"
@@ -15,6 +17,27 @@ x-app-environment: &app-environment
   MONOBANK_TOKEN_ENCRYPTION_KEY: "${MONOBANK_TOKEN_ENCRYPTION_KEY:-YmV0dGVyLXRyYWNrZXItbW9ub2JhbmstZGV2LWtleSE=}"
 
 services:
+  redis:
+    image: redis:8.6.4-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - "${REDIS_MAXMEMORY:-128mb}"
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   db:
     image: cockroachdb/cockroach:v26.2.3
     command:
@@ -76,6 +99,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD

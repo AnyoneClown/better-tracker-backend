@@ -15,7 +15,7 @@ user.
   `app/schemas`.
 - SQLAlchemy 2 async ORM models under `app/models`.
 - `asyncpg` through the `sqlalchemy-cockroachdb` dialect, with one async session
-  per request.
+  per request, plus Redis response caching for authenticated tracker reads.
 - Alembic migrations under `alembic`.
 - Argon2 password hashes and signed, expiring JWT access tokens. Passwords and
   tokens are never returned by tracker endpoints or stored in plaintext.
@@ -41,8 +41,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Compose starts CockroachDB, creates the `tracker` database, applies all Alembic
-migrations, and starts the API. Once the `migrate` service has completed:
+Compose starts Redis and CockroachDB, creates the `tracker` database, applies
+all Alembic migrations, and starts the API. Once the `migrate` service has
+completed:
 
 - API: <http://localhost:8000>
 - Swagger UI: <http://localhost:8000/docs>
@@ -155,11 +156,10 @@ and intentionally starts no local database:
 docker compose -f compose.production.yaml up -d --build --wait
 ```
 
-The Render deployment follows the same separation: set its secret
-`DATABASE_URL` to the standard `postgresql://...?sslmode=verify-full` URL from
-Cockroach Cloud and keep `PGSSLROOTCERT=/etc/ssl/certs/ca-certificates.crt`.
-The application normalizes that provider URL for its async driver. Never
-commit either `.env` file.
+Set `DATABASE_URL` in `.env.production` to the standard
+`postgresql://...?sslmode=verify-full` URL from Cockroach Cloud and keep
+`PGSSLROOTCERT=/etc/ssl/certs/ca-certificates.crt`. The application normalizes
+that URL for its async driver. Never commit either `.env` file.
 
 The production container applies idempotent migrations before starting the API.
 Local development applies the same migration history to its own isolated
@@ -176,6 +176,9 @@ Settings are read from environment variables and, for local commands, `.env`.
 | `DATABASE_URL` | `cockroachdb+asyncpg://root@localhost:26257/tracker` | Database URL used by a host-run API and Alembic. |
 | `COMPOSE_DATABASE_URL` | `cockroachdb+asyncpg://root@db:26257/tracker` | URL that Compose maps to `DATABASE_URL` inside app containers. |
 | `DATABASE_ECHO` | `false` | Set to `true` to log generated SQL. |
+| `REDIS_URL` | Unset | Redis connection URL. Tracker reads bypass the cache when unset or unavailable. Compose defaults to `redis://redis:6379/0`. |
+| `CACHE_TTL_SECONDS` | `300` | Maximum lifetime for cached tracker responses. Successful mutations invalidate all cached responses for that user immediately. |
+| `REDIS_MAXMEMORY` | `128mb` | Memory limit for the cache service started by Compose. |
 | `CORS_ORIGINS` | `["http://localhost:43127"]` | JSON array of allowed frontend origins. |
 | `JWT_SECRET_KEY` | Development-only value | Secret used to sign access tokens. Set a random value of at least 32 characters; the development default is rejected outside development/test. |
 | `JWT_ISSUER` | `better-tracker-api` | Required JWT issuer claim. |

@@ -16,10 +16,8 @@ COPY alembic ./alembic
 
 RUN pip install .
 
-COPY scripts/start-render.sh /usr/local/bin/start-render
-
 USER app
 
 EXPOSE 8000
 
-CMD ["/bin/sh", "/usr/local/bin/start-render"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

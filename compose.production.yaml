@@ -5,11 +5,33 @@ x-app-environment: &app-environment
     - .env.production
 
 services:
+  redis:
+    image: redis:8.6.4-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - "${REDIS_MAXMEMORY:-128mb}"
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
     <<: *app-environment
+    environment:
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      CACHE_TTL_SECONDS: "${CACHE_TTL_SECONDS:-300}"
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -24,4 +46,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped

@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
+from app.cache import cache_response
 from app.models.health import NutritionLog, WeightEntry
 from app.schemas.health import (
     HealthSummary,
@@ -95,6 +96,7 @@ async def create_weight_entry(
 
 
 @router.get("/weights", response_model=WeightEntryListResponse)
+@cache_response
 async def list_weight_entries(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -129,6 +131,7 @@ async def list_weight_entries(
 
 
 @router.get("/weights/{entry_id}", response_model=WeightEntryResponse)
+@cache_response
 async def get_weight_entry(
     entry_id: UUID,
     session: SessionDep,
@@ -201,6 +204,7 @@ async def create_nutrition_log(
 
 
 @router.get("/nutrition", response_model=NutritionLogListResponse)
+@cache_response
 async def list_nutrition_logs(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -235,6 +239,7 @@ async def list_nutrition_logs(
 
 
 @router.get("/nutrition/{log_id}", response_model=NutritionLogResponse)
+@cache_response
 async def get_nutrition_log(
     log_id: UUID,
     session: SessionDep,
@@ -271,6 +276,7 @@ async def delete_nutrition_log(
 
 
 @router.get("/summary", response_model=HealthSummary)
+@cache_response
 async def get_health_summary(
     session: SessionDep,
     current_user: CurrentUserDep,

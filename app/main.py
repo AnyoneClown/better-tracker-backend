@@ -1,10 +1,12 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api.router import api_router
+from app.cache import close_cache, initialize_cache, invalidate_user_cache
 from app.core.config import settings
 from app.db.session import async_session_factory, engine
 from app.integrations.monobank.service import (
@@ -15,11 +17,13 @@ from app.integrations.monobank.service import (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await initialize_cache()
     await mark_interrupted_monobank_syncs(async_session_factory)
     try:
         yield
     finally:
         await cancel_all_monobank_syncs()
+        await close_cache()
         await engine.dispose()
 
 
@@ -40,6 +44,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def invalidate_cache_after_mutation(
+    request: Request,
+    call_next: RequestResponseEndpoint,
+) -> Response:
+    response = await call_next(request)
+    user_id = getattr(request.state, "user_id", None)
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and response.status_code < 400:
+        if user_id is not None:
+            await invalidate_user_cache(user_id)
+    return response
 
 app.include_router(api_router)
 

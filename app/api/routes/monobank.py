@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import CurrentUserDep, SessionDep
+from app.cache import cache_response
 from app.integrations.monobank.client import (
     MonobankAPIError,
     MonobankClient,
@@ -126,6 +127,7 @@ async def connect_monobank(
 
 
 @router.get("/connection", response_model=MonobankConnectionResponse)
+@cache_response
 async def get_monobank_connection(
     session: SessionDep,
     current_user: CurrentUserDep,

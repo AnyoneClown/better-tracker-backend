@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import CurrentUserDep, SessionDep
+from app.cache import cache_response
 from app.models.workout import Workout, WorkoutSet
 from app.schemas.workout import (
     WorkoutCreate,
@@ -77,6 +78,7 @@ async def create_workout(
 
 
 @router.get("", response_model=WorkoutListResponse)
+@cache_response
 async def list_workouts(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -114,6 +116,7 @@ async def list_workouts(
 
 
 @router.get("/summary", response_model=WorkoutSummary)
+@cache_response
 async def get_workout_summary(
     session: SessionDep,
     current_user: CurrentUserDep,
@@ -203,6 +206,7 @@ async def get_workout_summary(
 
 
 @router.get("/{workout_id}", response_model=WorkoutRead)
+@cache_response
 async def get_workout(
     workout_id: UUID,
     session: SessionDep,

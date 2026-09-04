@@ -83,7 +83,16 @@ def include_object(
     reflected: bool,
     compare_to: Any,
 ) -> bool:
-    """Ignore only Cockroach's reflected default NULLS FIRST modifier."""
+    """Ignore Cockroach reflection differences that are not schema changes."""
+    # Cockroach reflects a partial unique index as a UniqueConstraint, so the
+    # same object otherwise appears once removed and once added.
+    if (
+        context.get_context().dialect.name == "cockroachdb"
+        and name == "uq_workouts_one_active_per_user"
+        and compare_to is None
+        and type_ in {"index", "unique_constraint"}
+    ):
+        return False
     if (
         type_ != "index"
         or context.get_context().dialect.name != "cockroachdb"

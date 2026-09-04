@@ -213,3 +213,114 @@ async def test_workout_validation_and_missing_resources(
             json={"name": None},
         )
     ).status_code == 422
+
+
+async def test_active_workout_autosave_completion_and_history_exclusion(
+    api_client: AsyncClient,
+) -> None:
+    active_payload = {
+        "name": "Full Body",
+        "performed_at": "2026-07-20T18:00:00+03:00",
+        "notes": None,
+        "sets": [
+            {
+                "exercise": "Back Squat",
+                "set_number": 1,
+                "is_completed": False,
+                "rest_seconds": 180,
+            },
+            {
+                "exercise": "Back Squat",
+                "set_number": 2,
+                "is_completed": False,
+                "reps": 5,
+                "weight_kg": "100.000",
+                "rest_seconds": 180,
+            },
+            {
+                "exercise": "Bench Press",
+                "set_number": 1,
+                "is_completed": False,
+                "reps": 5,
+                "weight_kg": "70.000",
+                "rest_seconds": 180,
+            },
+        ],
+    }
+    created = await api_client.post("/api/v1/workouts/active", json=active_payload)
+    assert created.status_code == 201, created.text
+    workout_id = created.json()["id"]
+    assert created.json()["completed_at"] is None
+    assert [item["position"] for item in created.json()["sets"]] == [1, 2, 3]
+
+    duplicate = await api_client.post("/api/v1/workouts/active", json=active_payload)
+    assert duplicate.status_code == 409
+    assert (await api_client.get("/api/v1/workouts")).json()["total"] == 0
+    assert (await api_client.get("/api/v1/workouts/summary")).json()[
+        "workout_count"
+    ] == 0
+
+    autosave_sets = active_payload["sets"]
+    assert isinstance(autosave_sets, list)
+    autosave_sets[1]["is_completed"] = True
+    saved = await api_client.patch(
+        f"/api/v1/workouts/{workout_id}",
+        json={
+            "rest_timer_ends_at": "2026-07-20T18:03:00+03:00",
+            "sets": autosave_sets,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["sets"][1]["is_completed"] is True
+    assert saved.json()["rest_timer_ends_at"] is not None
+
+    completed = await api_client.post(f"/api/v1/workouts/{workout_id}/complete")
+    assert completed.status_code == 200, completed.text
+    body = completed.json()
+    assert body["completed_at"] is not None
+    assert body["rest_timer_ends_at"] is None
+    assert body["duration_minutes"] >= 1
+    assert len(body["sets"]) == 1
+    assert body["sets"][0]["position"] == 1
+    assert body["sets"][0]["set_number"] == 1
+    assert (await api_client.get("/api/v1/workouts")).json()["total"] == 1
+
+
+async def test_active_workout_rejects_invalid_completed_set_and_can_cancel(
+    api_client: AsyncClient,
+) -> None:
+    invalid = await api_client.post(
+        "/api/v1/workouts/active",
+        json={
+            "name": "Invalid",
+            "performed_at": "2026-07-20T18:00:00+03:00",
+            "sets": [
+                {
+                    "exercise": "Squat",
+                    "set_number": 1,
+                    "is_completed": True,
+                }
+            ],
+        },
+    )
+    assert invalid.status_code == 422
+
+    created = await api_client.post(
+        "/api/v1/workouts/active",
+        json={
+            "name": "Cancelable",
+            "performed_at": "2026-07-20T18:00:00+03:00",
+            "sets": [
+                {
+                    "exercise": "Squat",
+                    "set_number": 1,
+                    "is_completed": False,
+                }
+            ],
+        },
+    )
+    assert created.status_code == 201, created.text
+    workout_id = created.json()["id"]
+    canceled = await api_client.delete(f"/api/v1/workouts/{workout_id}")
+    assert canceled.status_code == 204
+    assert (await api_client.get("/api/v1/workouts/active")).json() is None

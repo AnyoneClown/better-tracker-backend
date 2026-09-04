@@ -31,6 +31,20 @@ async def test_users_cannot_read_or_mutate_each_others_resources(
             "sets": [{"exercise": "Squat", "set_number": 1, "reps": 5}],
         },
     )
+    routine = await api_client.post(
+        "/api/v1/workout-routines",
+        json={
+            "name": "Private routine",
+            "exercises": [
+                {
+                    "exercise": "Squat",
+                    "set_count": 3,
+                    "target_reps": 5,
+                    "rest_seconds": 180,
+                }
+            ],
+        },
+    )
     transaction = await api_client.post(
         "/api/v1/finance/transactions",
         json={
@@ -88,6 +102,7 @@ async def test_users_cannot_read_or_mutate_each_others_resources(
     )
     created = (
         workout,
+        routine,
         transaction,
         budget,
         account,
@@ -102,6 +117,7 @@ async def test_users_cannot_read_or_mutate_each_others_resources(
     second_user_headers = await register_and_login_second_user(api_client)
     owner_paths = (
         f"/api/v1/workouts/{workout.json()['id']}",
+        f"/api/v1/workout-routines/{routine.json()['id']}",
         f"/api/v1/finance/transactions/{transaction.json()['id']}",
         f"/api/v1/finance/budgets/{budget.json()['id']}",
         f"/api/v1/wealth/accounts/{account.json()['id']}",
@@ -235,8 +251,13 @@ async def test_lists_summaries_and_unique_values_are_scoped_per_user(
         "/api/v1/workouts",
         headers=second_user_headers,
     )
+    routines = await api_client.get(
+        "/api/v1/workout-routines",
+        headers=second_user_headers,
+    )
     assert budgets.json()["total"] == 1
     assert Decimal(finance_summary.json()["total_budget"]) == Decimal("250.00")
     assert Decimal(wealth_summary.json()["assets"]) == Decimal("300.00")
     assert Decimal(health_summary.json()["latest_weight_kg"]) == Decimal("70.00")
     assert workouts.json()["total"] == 0
+    assert routines.json() == []

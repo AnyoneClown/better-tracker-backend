@@ -8,7 +8,12 @@ from app.models.wealth import (
     SavingsContribution,
     SavingsGoal,
 )
-from app.models.workout import Workout, WorkoutSet
+from app.models.workout import (
+    Workout,
+    WorkoutRoutine,
+    WorkoutRoutineExercise,
+    WorkoutSet,
+)
 
 __all__ = [
     "FinancialAccount",
@@ -24,5 +29,7 @@ __all__ = [
     "User",
     "WeightEntry",
     "Workout",
+    "WorkoutRoutine",
+    "WorkoutRoutineExercise",
     "WorkoutSet",
 ]

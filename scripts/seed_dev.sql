@@ -71,43 +71,46 @@ ON CONFLICT (id) DO UPDATE SET
 -- Workouts and exercise sets ------------------------------------------------
 
 INSERT INTO workouts
-    (id, user_id, name, performed_at, duration_minutes, notes)
+    (id, user_id, name, performed_at, duration_minutes, notes, completed_at)
 VALUES
-    ('30000000-0000-4000-8000-000000000001', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Full-body strength', '2026-07-18 09:00:00+00', 50, 'Steady session, moderate load.'),
-    ('30000000-0000-4000-8000-000000000002', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Upper body',         '2026-07-22 17:30:00+00', 55, 'Added weight to the final bench set.'),
-    ('30000000-0000-4000-8000-000000000003', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Run intervals',      '2026-07-23 06:45:00+00', 42, 'Five easy-to-fast intervals.'),
-    ('30000000-0000-4000-8000-000000000004', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Lower body',         '2026-07-24 17:45:00+00', 60, 'Good depth and controlled tempo.')
+    ('30000000-0000-4000-8000-000000000001', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Full-body strength', '2026-07-18 09:00:00+00', 50, 'Steady session, moderate load.',               '2026-07-18 09:50:00+00'),
+    ('30000000-0000-4000-8000-000000000002', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Upper body',         '2026-07-22 17:30:00+00', 55, 'Added weight to the final bench set.',         '2026-07-22 18:25:00+00'),
+    ('30000000-0000-4000-8000-000000000003', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Run intervals',      '2026-07-23 06:45:00+00', 42, 'Five easy-to-fast intervals.',                 '2026-07-23 07:27:00+00'),
+    ('30000000-0000-4000-8000-000000000004', (SELECT id FROM users WHERE email = 'demo@example.com'), 'Lower body',         '2026-07-24 17:45:00+00', 60, 'Good depth and controlled tempo.',             '2026-07-24 18:45:00+00')
 ON CONFLICT (id) DO UPDATE SET
     user_id = excluded.user_id,
     name = excluded.name,
     performed_at = excluded.performed_at,
     duration_minutes = excluded.duration_minutes,
     notes = excluded.notes,
+    completed_at = excluded.completed_at,
     updated_at = now();
 
 INSERT INTO workout_sets
-    (id, workout_id, exercise, set_number, reps, weight_kg, distance_km, duration_seconds, notes)
+    (id, workout_id, exercise, set_number, position, is_completed, reps, weight_kg, distance_km, duration_seconds, notes)
 VALUES
-    ('31000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', 'goblet squat',       1, 12, 24.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000001', 'goblet squat',       2, 12, 24.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000001', 'shoulder press',     1, 10, 18.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000004', '30000000-0000-4000-8000-000000000001', 'shoulder press',     2, 10, 18.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000005', '30000000-0000-4000-8000-000000000002', 'bench press',        1,  8, 60.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000006', '30000000-0000-4000-8000-000000000002', 'bench press',        2,  8, 62.500, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000007', '30000000-0000-4000-8000-000000000002', 'bench press',        3,  7, 65.000, NULL,  NULL, 'One rep short of target.'),
-    ('31000000-0000-4000-8000-000000000008', '30000000-0000-4000-8000-000000000002', 'lat pulldown',       1, 10, 55.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000009', '30000000-0000-4000-8000-000000000002', 'lat pulldown',       2, 10, 55.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000010', '30000000-0000-4000-8000-000000000003', 'running',          1, NULL,   NULL, 5.200, 2520, 'Interval workout total.'),
-    ('31000000-0000-4000-8000-000000000011', '30000000-0000-4000-8000-000000000004', 'back squat',         1,  8, 80.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000012', '30000000-0000-4000-8000-000000000004', 'back squat',         2,  8, 80.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000013', '30000000-0000-4000-8000-000000000004', 'back squat',         3,  8, 82.500, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000014', '30000000-0000-4000-8000-000000000004', 'romanian deadlift',  1, 10, 70.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000015', '30000000-0000-4000-8000-000000000004', 'romanian deadlift',  2, 10, 70.000, NULL,  NULL, NULL),
-    ('31000000-0000-4000-8000-000000000016', '30000000-0000-4000-8000-000000000004', 'romanian deadlift',  3,  9, 70.000, NULL,  NULL, NULL)
+    ('31000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', 'goblet squat',       1, 1, true, 12, 24.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000001', 'goblet squat',       2, 2, true, 12, 24.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000001', 'shoulder press',     1, 3, true, 10, 18.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000004', '30000000-0000-4000-8000-000000000001', 'shoulder press',     2, 4, true, 10, 18.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000005', '30000000-0000-4000-8000-000000000002', 'bench press',        1, 1, true,  8, 60.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000006', '30000000-0000-4000-8000-000000000002', 'bench press',        2, 2, true,  8, 62.500, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000007', '30000000-0000-4000-8000-000000000002', 'bench press',        3, 3, true,  7, 65.000, NULL,  NULL, 'One rep short of target.'),
+    ('31000000-0000-4000-8000-000000000008', '30000000-0000-4000-8000-000000000002', 'lat pulldown',       1, 4, true, 10, 55.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000009', '30000000-0000-4000-8000-000000000002', 'lat pulldown',       2, 5, true, 10, 55.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000010', '30000000-0000-4000-8000-000000000003', 'running',            1, 1, true, NULL,   NULL, 5.200, 2520, 'Interval workout total.'),
+    ('31000000-0000-4000-8000-000000000011', '30000000-0000-4000-8000-000000000004', 'back squat',         1, 1, true,  8, 80.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000012', '30000000-0000-4000-8000-000000000004', 'back squat',         2, 2, true,  8, 80.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000013', '30000000-0000-4000-8000-000000000004', 'back squat',         3, 3, true,  8, 82.500, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000014', '30000000-0000-4000-8000-000000000004', 'romanian deadlift',  1, 4, true, 10, 70.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000015', '30000000-0000-4000-8000-000000000004', 'romanian deadlift',  2, 5, true, 10, 70.000, NULL,  NULL, NULL),
+    ('31000000-0000-4000-8000-000000000016', '30000000-0000-4000-8000-000000000004', 'romanian deadlift',  3, 6, true,  9, 70.000, NULL,  NULL, NULL)
 ON CONFLICT (id) DO UPDATE SET
     workout_id = excluded.workout_id,
     exercise = excluded.exercise,
     set_number = excluded.set_number,
+    position = excluded.position,
+    is_completed = excluded.is_completed,
     reps = excluded.reps,
     weight_kg = excluded.weight_kg,
     distance_km = excluded.distance_km,

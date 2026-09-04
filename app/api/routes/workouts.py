@@ -1,16 +1,19 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from math import ceil
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import CurrentUserDep, SessionDep
 from app.cache import cache_response
 from app.models.workout import Workout, WorkoutSet
 from app.schemas.workout import (
+    ActiveWorkoutCreate,
     WorkoutCreate,
     WorkoutExerciseSummary,
     WorkoutListResponse,
@@ -55,6 +58,23 @@ def _validate_date_range(date_from: datetime | None, date_to: datetime | None) -
         )
 
 
+def _set_models(
+    payload: WorkoutCreate | WorkoutUpdate | ActiveWorkoutCreate,
+) -> list[WorkoutSet]:
+    return [
+        WorkoutSet(**item.model_dump(exclude={"position"}), position=position)
+        for position, item in enumerate(payload.sets, 1)
+    ]
+
+
+def _reject_unchecked_completed_sets(payload: WorkoutCreate | WorkoutUpdate) -> None:
+    if any(not item.is_completed for item in payload.sets):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Unchecked sets are only allowed on an active workout",
+        )
+
+
 @router.post(
     "",
     response_model=WorkoutRead,
@@ -65,15 +85,74 @@ async def create_workout(
     session: SessionDep,
     current_user: CurrentUserDep,
 ) -> Workout:
+    _reject_unchecked_completed_sets(payload)
     workout = Workout(
         **payload.model_dump(exclude={"sets"}),
         user_id=current_user.id,
-        sets=[WorkoutSet(**item.model_dump()) for item in payload.sets],
+        completed_at=datetime.now(UTC),
+        sets=_set_models(payload),
     )
     session.add(workout)
     await session.flush()
     workout_id = workout.id
     await session.commit()
+    return await _get_workout(workout_id, session, current_user.id)
+
+
+@router.get("/active", response_model=WorkoutRead | None)
+async def get_active_workout(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Workout | None:
+    result = await session.execute(
+        select(Workout)
+        .where(
+            Workout.user_id == current_user.id,
+            Workout.completed_at.is_(None),
+        )
+        .options(selectinload(Workout.sets))
+    )
+    return result.scalar_one_or_none()
+
+
+@router.post(
+    "/active",
+    response_model=WorkoutRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_active_workout(
+    payload: ActiveWorkoutCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Workout:
+    existing = await session.scalar(
+        select(Workout.id).where(
+            Workout.user_id == current_user.id,
+            Workout.completed_at.is_(None),
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active workout already exists",
+        )
+    workout = Workout(
+        **payload.model_dump(exclude={"sets"}),
+        user_id=current_user.id,
+        completed_at=None,
+        sets=_set_models(payload),
+    )
+    session.add(workout)
+    try:
+        await session.flush()
+        workout_id = workout.id
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active workout already exists",
+        ) from exc
     return await _get_workout(workout_id, session, current_user.id)
 
 
@@ -89,7 +168,10 @@ async def list_workouts(
 ) -> WorkoutListResponse:
     _validate_date_range(date_from, date_to)
 
-    filters = [Workout.user_id == current_user.id]
+    filters = [
+        Workout.user_id == current_user.id,
+        Workout.completed_at.is_not(None),
+    ]
     if date_from is not None:
         filters.append(Workout.performed_at >= date_from)
     if date_to is not None:
@@ -125,7 +207,10 @@ async def get_workout_summary(
 ) -> WorkoutSummary:
     _validate_date_range(date_from, date_to)
 
-    filters = [Workout.user_id == current_user.id]
+    filters = [
+        Workout.user_id == current_user.id,
+        Workout.completed_at.is_not(None),
+    ]
     if date_from is not None:
         filters.append(Workout.performed_at >= date_from)
     if date_to is not None:
@@ -215,6 +300,41 @@ async def get_workout(
     return await _get_workout(workout_id, session, current_user.id)
 
 
+@router.post("/{workout_id}/complete", response_model=WorkoutRead)
+async def complete_workout(
+    workout_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> Workout:
+    workout = await _get_workout(workout_id, session, current_user.id)
+    if workout.completed_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Workout is already complete",
+        )
+
+    retained = [item for item in workout.sets if item.is_completed]
+    workout.replace_sets(retained)
+    await session.flush()
+    counts: dict[str, int] = {}
+    for position, item in enumerate(retained, 1):
+        counts[item.exercise] = counts.get(item.exercise, 0) + 1
+        item.position = position
+        item.set_number = counts[item.exercise]
+
+    completed_at = datetime.now(UTC)
+    performed_at = workout.performed_at
+    if performed_at.tzinfo is None:
+        performed_at = performed_at.replace(tzinfo=UTC)
+    workout.duration_minutes = max(
+        1, ceil((completed_at - performed_at.astimezone(UTC)).total_seconds() / 60)
+    )
+    workout.completed_at = completed_at
+    workout.rest_timer_ends_at = None
+    await session.commit()
+    return await _get_workout(workout_id, session, current_user.id)
+
+
 @router.patch("/{workout_id}", response_model=WorkoutRead)
 async def update_workout(
     workout_id: UUID,
@@ -224,13 +344,21 @@ async def update_workout(
 ) -> Workout:
     workout = await _get_workout(workout_id, session, current_user.id)
 
+    if workout.completed_at is not None:
+        _reject_unchecked_completed_sets(payload)
+        if payload.rest_timer_ends_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Completed workouts cannot have a rest timer",
+            )
+
     for field_name, value in payload.model_dump(
         exclude_unset=True, exclude={"sets"}
     ).items():
         setattr(workout, field_name, value)
 
     if "sets" in payload.model_fields_set:
-        replacement_sets = [WorkoutSet(**item.model_dump()) for item in payload.sets]
+        replacement_sets = _set_models(payload)
         workout.replace_sets([])
         await session.flush()
         workout.replace_sets(replacement_sets)

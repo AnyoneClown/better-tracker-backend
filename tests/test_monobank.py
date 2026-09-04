@@ -178,6 +178,36 @@ async def connect(
     return response.json()
 
 
+async def track_sources(
+    client: AsyncClient,
+    connection: dict[str, Any],
+    *,
+    account_external_ids: set[str] | None = None,
+    jars: bool = False,
+    headers: dict[str, str] | None = None,
+) -> None:
+    for account_item in connection["accounts"]:
+        if (
+            account_external_ids is not None
+            and account_item["external_id"] not in account_external_ids
+        ):
+            continue
+        response = await client.patch(
+            f"/api/v1/integrations/monobank/accounts/{account_item['id']}",
+            json={"is_tracked": True},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+    if jars:
+        for jar in connection["jars"]:
+            response = await client.patch(
+                f"/api/v1/integrations/monobank/jars/{jar['id']}",
+                json={"is_tracked": True},
+                headers=headers,
+            )
+            assert response.status_code == 200, response.text
+
+
 def install_provider(state: ProviderState) -> MonobankClient:
     client = MonobankClient(
         transport=httpx.MockTransport(state.handle),
@@ -203,10 +233,35 @@ async def test_connect_encrypts_token_and_returns_only_safe_live_state(
         assert response["sync_status"] == "idle"
         assert len(response["accounts"]) == 3
         assert len(response["jars"]) == 1
-        assert all(account["is_tracked"] is True for account in response["accounts"])
+        assert all(account["is_tracked"] is False for account in response["accounts"])
+        assert response["jars"][0]["is_tracked"] is False
         assert Decimal(response["accounts"][0]["credit_limit"]) >= 0
         assert Decimal(response["jars"][0]["progress_percent"]) == Decimal("25")
         assert all(item["external_id"] != "managed" for item in response["accounts"])
+        assert (await api_client.get("/api/v1/finance/currencies")).json() == []
+        empty_wealth = await api_client.get("/api/v1/wealth/summary?currency=UAH")
+        assert Decimal(empty_wealth.json()["assets"]) == 0
+        assert Decimal(empty_wealth.json()["savings"]) == 0
+
+        tracked_account = response["accounts"][0]
+        tracked_jar = response["jars"][0]
+        await track_sources(
+            api_client,
+            response,
+            account_external_ids={tracked_account["external_id"]},
+            jars=True,
+        )
+        state.client_info[TOKEN_A]["accounts"].append(
+            account("new-card", balance=1_000)
+        )
+        refreshed = await connect(api_client)
+        refreshed_accounts = {
+            item["external_id"]: item for item in refreshed["accounts"]
+        }
+        assert refreshed_accounts[tracked_account["external_id"]]["is_tracked"] is True
+        assert refreshed_accounts["new-card"]["is_tracked"] is False
+        assert refreshed["jars"][0]["id"] == tracked_jar["id"]
+        assert refreshed["jars"][0]["is_tracked"] is True
 
         async with aclosing(sqlite_session_override()) as sessions:
             session = await anext(sessions)
@@ -236,13 +291,11 @@ async def test_sync_imports_only_tracked_cards(
             account["external_id"]: account for account in connection["accounts"]
         }
 
-        for external_id in ("card-debt", "card-usd"):
-            disabled = await api_client.patch(
-                f"/api/v1/integrations/monobank/accounts/{accounts[external_id]['id']}",
-                json={"is_tracked": False},
-            )
-            assert disabled.status_code == 200, disabled.text
-            assert disabled.json()["is_tracked"] is False
+        await track_sources(
+            api_client,
+            connection,
+            account_external_ids={"card-a"},
+        )
 
         refreshed = await api_client.get("/api/v1/integrations/monobank/connection")
         tracked_external_ids = {
@@ -253,7 +306,7 @@ async def test_sync_imports_only_tracked_cards(
         assert tracked_external_ids == {"card-a"}
 
         wealth = await api_client.get("/api/v1/wealth/summary?currency=UAH")
-        assert Decimal(wealth.json()["assets"]) == Decimal("1250")
+        assert Decimal(wealth.json()["assets"]) == Decimal("1000")
         assert Decimal(wealth.json()["liabilities"]) == 0
         currencies = await api_client.get("/api/v1/finance/currencies")
         assert currencies.json() == ["UAH"]
@@ -276,6 +329,40 @@ async def test_sync_imports_only_tracked_cards(
         )
         assert transactions.json()["total"] == 2
 
+        disabled = await api_client.patch(
+            f"/api/v1/integrations/monobank/accounts/{accounts['card-a']['id']}",
+            json={"is_tracked": False},
+        )
+        assert disabled.status_code == 200
+        hidden = await api_client.get(
+            "/api/v1/finance/transactions?source=monobank&limit=100"
+        )
+        assert hidden.json()["total"] == 0
+        retained = await api_client.get(
+            "/api/v1/finance/transactions",
+            params={"source": "monobank", "include_ignored": True, "limit": 100},
+        )
+        assert retained.json()["total"] == 2
+        assert (await api_client.get("/api/v1/finance/currencies")).json() == []
+        hidden_summary = await api_client.get(
+            "/api/v1/finance/summary?year=2026&month=7&currency=UAH"
+        )
+        assert Decimal(hidden_summary.json()["total_income"]) == 0
+
+        restored = await api_client.patch(
+            f"/api/v1/integrations/monobank/accounts/{accounts['card-a']['id']}",
+            json={"is_tracked": True},
+        )
+        assert restored.status_code == 200
+        visible_again = await api_client.get(
+            "/api/v1/finance/transactions?source=monobank&limit=100"
+        )
+        assert visible_again.json()["total"] == 2
+        restored_summary = await api_client.get(
+            "/api/v1/finance/summary?year=2026&month=7&currency=UAH"
+        )
+        assert Decimal(restored_summary.json()["total_income"]) == Decimal("1000")
+
         disabled_last = await api_client.patch(
             f"/api/v1/integrations/monobank/accounts/{accounts['card-a']['id']}",
             json={"is_tracked": False},
@@ -294,7 +381,8 @@ async def test_sync_is_idempotent_preserves_overrides_and_updates_provider_field
     state = ProviderState()
     install_provider(state)
     try:
-        await connect(api_client)
+        connection = await connect(api_client)
+        await track_sources(api_client, connection)
         accepted = await api_client.post("/api/v1/integrations/monobank/sync")
         assert accepted.status_code == 202, accepted.text
         accepted_body = accepted.json()
@@ -390,7 +478,8 @@ async def test_sync_accepts_custom_period_and_chunks_long_ranges(
     state = ProviderState()
     install_provider(state)
     try:
-        await connect(api_client)
+        connection = await connect(api_client)
+        await track_sources(api_client, connection)
         accepted = await api_client.post(
             "/api/v1/integrations/monobank/sync",
             json={"date_from": "2026-05-01", "date_to": "2026-07-26"},
@@ -454,6 +543,11 @@ async def test_user_can_delete_imported_transactions_for_one_account(
     install_provider(state)
     try:
         connection = await connect(api_client)
+        await track_sources(
+            api_client,
+            connection,
+            account_external_ids={"card-a"},
+        )
         card = next(
             account
             for account in connection["accounts"]
@@ -518,7 +612,8 @@ async def test_wealth_currencies_interruption_conflict_and_disconnect(
     state = ProviderState()
     install_provider(state)
     try:
-        await connect(api_client)
+        connection_response = await connect(api_client)
+        await track_sources(api_client, connection_response, jars=True)
         wealth = await api_client.get("/api/v1/wealth/summary?currency=UAH")
         assert wealth.status_code == 200
         assert Decimal(wealth.json()["assets"]) == Decimal("1250")
@@ -526,6 +621,21 @@ async def test_wealth_currencies_interruption_conflict_and_disconnect(
         assert Decimal(wealth.json()["savings"]) == Decimal("250")
         currencies = await api_client.get("/api/v1/finance/currencies")
         assert currencies.json() == ["UAH", "USD"]
+
+        jar_id = connection_response["jars"][0]["id"]
+        ignored_jar = await api_client.patch(
+            f"/api/v1/integrations/monobank/jars/{jar_id}",
+            json={"is_tracked": False},
+        )
+        assert ignored_jar.status_code == 200
+        assert ignored_jar.json()["is_tracked"] is False
+        wealth_without_jar = await api_client.get("/api/v1/wealth/summary?currency=UAH")
+        assert Decimal(wealth_without_jar.json()["assets"]) == Decimal("1000")
+        assert Decimal(wealth_without_jar.json()["savings"]) == 0
+        await api_client.patch(
+            f"/api/v1/integrations/monobank/jars/{jar_id}",
+            json={"is_tracked": True},
+        )
 
         async with aclosing(sqlite_session_override()) as sessions:
             session: AsyncSession = await anext(sessions)
@@ -553,6 +663,11 @@ async def test_wealth_currencies_interruption_conflict_and_disconnect(
                 json={"is_tracked": False},
             )
             assert tracking_conflict.status_code == 409
+            jar_tracking_conflict = await api_client.patch(
+                f"/api/v1/integrations/monobank/jars/{jar_id}",
+                json={"is_tracked": False},
+            )
+            assert jar_tracking_conflict.status_code == 409
             await mark_interrupted_monobank_syncs(factory)
 
         interrupted = await api_client.get("/api/v1/integrations/monobank/connection")
@@ -591,7 +706,12 @@ async def test_wealth_currencies_interruption_conflict_and_disconnect(
             "jars": [],
         }
         remaining = await api_client.get("/api/v1/finance/transactions?source=monobank")
-        assert remaining.json()["total"] == imported_before_disconnect
+        assert remaining.json()["total"] == 0
+        retained = await api_client.get(
+            "/api/v1/finance/transactions",
+            params={"source": "monobank", "include_ignored": True},
+        )
+        assert retained.json()["total"] == imported_before_disconnect
         empty_wealth = await api_client.get("/api/v1/wealth/summary?currency=UAH")
         assert Decimal(empty_wealth.json()["assets"]) == 0
     finally:
@@ -604,7 +724,7 @@ async def test_connections_and_imports_are_isolated_between_users(
     state = ProviderState()
     install_provider(state)
     try:
-        await connect(api_client)
+        first_connection = await connect(api_client)
         registration = await api_client.post(
             "/api/v1/auth/register",
             json={"email": "mono-second@example.com", "password": "SecondPass1!"},
@@ -615,7 +735,13 @@ async def test_connections_and_imports_are_isolated_between_users(
             json={"email": "mono-second@example.com", "password": "SecondPass1!"},
         )
         second_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-        await connect(api_client, TOKEN_B, headers=second_headers)
+        second_created = await connect(api_client, TOKEN_B, headers=second_headers)
+        await track_sources(api_client, first_connection)
+        await track_sources(
+            api_client,
+            second_created,
+            headers=second_headers,
+        )
         owner_connection = await api_client.get(
             "/api/v1/integrations/monobank/connection"
         )
@@ -637,6 +763,12 @@ async def test_connections_and_imports_are_isolated_between_users(
             headers=second_headers,
         )
         assert hidden_tracking_update.status_code == 404
+        hidden_jar_update = await api_client.patch(
+            f"/api/v1/integrations/monobank/jars/{owner_connection.json()['jars'][0]['id']}",
+            json={"is_tracked": True},
+            headers=second_headers,
+        )
+        assert hidden_jar_update.status_code == 404
 
         await api_client.post("/api/v1/integrations/monobank/sync")
         await wait_for_sync(api_client)

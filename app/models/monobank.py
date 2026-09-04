@@ -140,7 +140,7 @@ class MonobankAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     iban: Mapped[str | None] = mapped_column(String(34), nullable=True)
     cashback_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     is_tracked: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default="true"
+        Boolean, nullable=False, default=False, server_default="false"
     )
 
     connection: Mapped[MonobankConnection] = relationship(back_populates="accounts")
@@ -176,6 +176,9 @@ class MonobankJar(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     goal: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    is_tracked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     connection: Mapped[MonobankConnection] = relationship(back_populates="jars")
 

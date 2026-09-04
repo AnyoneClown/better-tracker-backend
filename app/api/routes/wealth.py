@@ -603,6 +603,7 @@ async def calculate_summary(
                 select(MonobankJar.balance).where(
                     MonobankJar.user_id == user_id,
                     MonobankJar.currency == currency,
+                    MonobankJar.is_tracked.is_(True),
                 )
             )
         ).all()

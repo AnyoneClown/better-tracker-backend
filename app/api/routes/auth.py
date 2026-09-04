@@ -24,6 +24,7 @@ from app.schemas.auth import (
     GoogleCodeExchange,
     GoogleUserInfo,
     UserLogin,
+    UserPreferences,
     UserRegistration,
     UserResponse,
 )
@@ -144,16 +145,20 @@ async def authorize_google(
     ],
 ) -> GoogleAuthorizationResponse:
     client_id, _ = google_credentials()
-    authorization_url = f"{GOOGLE_AUTHORIZATION_URL}?{urlencode({
-        'client_id': client_id,
-        'redirect_uri': str(redirect_uri),
-        'response_type': 'code',
-        'scope': 'openid email',
-        'state': state,
-        'code_challenge': code_challenge,
-        'code_challenge_method': 'S256',
-        'prompt': 'select_account',
-    })}"
+    authorization_url = f"{GOOGLE_AUTHORIZATION_URL}?{
+        urlencode(
+            {
+                'client_id': client_id,
+                'redirect_uri': str(redirect_uri),
+                'response_type': 'code',
+                'scope': 'openid email',
+                'state': state,
+                'code_challenge': code_challenge,
+                'code_challenge_method': 'S256',
+                'prompt': 'select_account',
+            }
+        )
+    }"
     return GoogleAuthorizationResponse(authorization_url=authorization_url)
 
 
@@ -169,9 +174,7 @@ async def exchange_google_code(
             detail="Google email is not verified",
         )
 
-    user = await session.scalar(
-        select(User).where(User.google_subject == profile.sub)
-    )
+    user = await session.scalar(select(User).where(User.google_subject == profile.sub))
     if user is None:
         email = str(profile.email)
         user = await session.scalar(select(User).where(User.email == email))
@@ -222,4 +225,16 @@ async def exchange_google_code(
 
 @router.get("/me", response_model=UserResponse)
 async def get_authenticated_user(current_user: CurrentUserDep) -> User:
+    return current_user
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_authenticated_user(
+    payload: UserPreferences,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> User:
+    current_user.locale = payload.locale
+    await session.commit()
+    await session.refresh(current_user)
     return current_user

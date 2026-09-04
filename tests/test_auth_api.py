@@ -33,8 +33,16 @@ async def test_user_can_register_with_normalized_email(
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["email"] == "new.user@example.com"
-    assert set(body) == {"id", "email", "is_active", "created_at", "updated_at"}
+    assert set(body) == {
+        "id",
+        "email",
+        "is_active",
+        "locale",
+        "created_at",
+        "updated_at",
+    }
     assert body["is_active"] is True
+    assert body["locale"] == "uk"
     UUID(body["id"])
 
     session_iterator = sqlite_session_override()
@@ -156,6 +164,21 @@ async def test_user_can_login_and_get_current_profile(
     assert profile.status_code == 200, profile.text
     assert profile.json()["id"] == registration.json()["id"]
     assert profile.json()["email"] == "login.user@example.com"
+
+    updated = await unauthenticated_api_client.patch(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token_body['access_token']}"},
+        json={"locale": "en"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["locale"] == "en"
+
+    invalid_locale = await unauthenticated_api_client.patch(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token_body['access_token']}"},
+        json={"locale": "fr"},
+    )
+    assert invalid_locale.status_code == 422
 
 
 async def test_google_oauth_creates_and_reuses_account(

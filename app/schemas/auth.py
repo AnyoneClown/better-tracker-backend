@@ -68,6 +68,13 @@ class UserResponse(EntityResponse):
 
     email: NormalizedEmail
     is_active: bool
+    locale: Literal["en", "uk"]
+
+
+class UserPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    locale: Literal["en", "uk"]
 
 
 class UserLogin(BaseModel):

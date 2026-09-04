@@ -26,6 +26,7 @@ from app.models.finance import FinancialTransaction, TransactionSource
 from app.models.monobank import (
     MonobankAccount,
     MonobankConnection,
+    MonobankJar,
     MonobankSyncStatus,
 )
 from app.schemas.monobank import (
@@ -33,6 +34,7 @@ from app.schemas.monobank import (
     MonobankAccountUpdate,
     MonobankConnectionCreate,
     MonobankConnectionResponse,
+    MonobankJarResponse,
     MonobankSyncAccepted,
     MonobankSyncRequest,
     MonobankTransactionsDeleteResponse,
@@ -281,6 +283,48 @@ async def update_monobank_account(
     await session.commit()
     await session.refresh(account)
     return account
+
+
+@router.patch(
+    "/jars/{jar_id}",
+    response_model=MonobankJarResponse,
+)
+async def update_monobank_jar(
+    jar_id: UUID,
+    payload: MonobankAccountUpdate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> MonobankJar:
+    jar = await session.scalar(
+        select(MonobankJar).where(
+            MonobankJar.id == jar_id,
+            MonobankJar.user_id == current_user.id,
+        )
+    )
+    if jar is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Monobank jar not found.",
+        )
+    connection_status = await session.scalar(
+        select(MonobankConnection.sync_status).where(
+            MonobankConnection.id == jar.connection_id,
+            MonobankConnection.user_id == current_user.id,
+        )
+    )
+    if connection_status == MonobankSyncStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Wait for the active Monobank sync to finish before changing "
+                "tracked jars."
+            ),
+        )
+
+    jar.is_tracked = payload.is_tracked
+    await session.commit()
+    await session.refresh(jar)
+    return jar
 
 
 @router.delete(

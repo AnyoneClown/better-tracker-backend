@@ -61,6 +61,7 @@ class MonobankJarResponse(EntityResponse):
     balance: Decimal
     goal: Decimal | None
     currency: str
+    is_tracked: bool
     progress_percent: Decimal | None
 
 

@@ -8,6 +8,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("length(email) <= 254", name="email_max_length"),
+        CheckConstraint("locale IN ('en', 'uk')", name="supported_locale"),
         UniqueConstraint("email", name="uq_users_email"),
     )
 
@@ -15,6 +16,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     google_subject: Mapped[str | None] = mapped_column(
         String(255), nullable=True, unique=True
+    )
+    locale: Mapped[str] = mapped_column(
+        String(2), default="uk", server_default="uk", nullable=False
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean,

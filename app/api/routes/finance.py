@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import ColumnElement, Select, delete, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUserDep, SessionDep
@@ -118,6 +118,17 @@ async def _get_budget_or_404(
     return budget
 
 
+def _transaction_is_visible(user_id: UUID) -> ColumnElement[bool]:
+    return or_(
+        FinancialTransaction.source != TransactionSource.MONOBANK,
+        exists().where(
+            MonobankAccount.user_id == user_id,
+            MonobankAccount.external_id == FinancialTransaction.external_account_id,
+            MonobankAccount.is_tracked.is_(True),
+        ),
+    )
+
+
 @router.get("/summary", response_model=FinanceSummaryResponse)
 async def get_finance_summary(
     session: SessionDep,
@@ -144,6 +155,7 @@ async def get_finance_summary(
                 FinancialTransaction.occurred_on <= period_end,
                 FinancialTransaction.hold.is_(False),
                 FinancialTransaction.excluded_from_summary.is_(False),
+                _transaction_is_visible(current_user.id),
             )
             .group_by(FinancialTransaction.category, FinancialTransaction.kind)
         )
@@ -241,6 +253,7 @@ async def list_transactions(
     ] = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    include_ignored: bool = False,
     offset: Offset = 0,
     limit: Limit = 50,
 ) -> FinancialTransactionListResponse:
@@ -251,6 +264,8 @@ async def list_transactions(
         )
 
     filters = [FinancialTransaction.user_id == current_user.id]
+    if not include_ignored:
+        filters.append(_transaction_is_visible(current_user.id))
     if kind is not None:
         filters.append(FinancialTransaction.kind == kind)
     if source is not None:
@@ -416,11 +431,9 @@ async def list_finance_currencies(
     current_user: CurrentUserDep,
 ) -> list[str]:
     model_columns = (
-        (FinancialTransaction, FinancialTransaction.currency),
         (MonthlyBudget, MonthlyBudget.currency),
         (FinancialAccount, FinancialAccount.currency),
         (SavingsGoal, SavingsGoal.currency),
-        (MonobankJar, MonobankJar.currency),
     )
     currencies: set[str] = set()
     for model, column in model_columns:
@@ -434,10 +447,34 @@ async def list_finance_currencies(
     currencies.update(
         (
             await session.scalars(
+                select(FinancialTransaction.currency)
+                .where(
+                    FinancialTransaction.user_id == current_user.id,
+                    _transaction_is_visible(current_user.id),
+                )
+                .distinct()
+            )
+        ).all()
+    )
+    currencies.update(
+        (
+            await session.scalars(
                 select(MonobankAccount.currency)
                 .where(
                     MonobankAccount.user_id == current_user.id,
                     MonobankAccount.is_tracked.is_(True),
+                )
+                .distinct()
+            )
+        ).all()
+    )
+    currencies.update(
+        (
+            await session.scalars(
+                select(MonobankJar.currency)
+                .where(
+                    MonobankJar.user_id == current_user.id,
+                    MonobankJar.is_tracked.is_(True),
                 )
                 .distinct()
             )

@@ -156,6 +156,7 @@ async def test_user_can_login_and_get_current_profile(
     assert token_body["token_type"] == "bearer"
     assert token_body["expires_in"] == 1800
     assert token_body["access_token"]
+    assert token_body["user_id"] == registration.json()["id"]
 
     profile = await unauthenticated_api_client.get(
         "/api/v1/auth/me",
@@ -236,6 +237,7 @@ async def test_google_oauth_creates_and_reuses_account(
         json=exchange_payload,
     )
     assert first.status_code == second.status_code == 200
+    assert first.json()["user_id"] == second.json()["user_id"]
 
     first_profile = await unauthenticated_api_client.get(
         "/api/v1/auth/me",

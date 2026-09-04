@@ -1,4 +1,5 @@
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import (
     AnyHttpUrl,
@@ -88,6 +89,7 @@ class AccessTokenResponse(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
+    user_id: UUID
 
 
 class GoogleAuthorizationResponse(BaseModel):

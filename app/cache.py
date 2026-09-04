@@ -7,12 +7,16 @@ from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi.encoders import jsonable_encoder
+from pydantic import ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.core.config import settings
+from app.schemas.auth import UserResponse
 
 PREFIX = "better-tracker:response-cache:v1"
+AUTH_USER_PREFIX = "better-tracker:auth-user:v1"
+AUTH_USER_TTL_SECONDS = 30
 
 _client = (
     Redis.from_url(
@@ -38,6 +42,41 @@ async def close_cache() -> None:
 
 async def invalidate_user_cache(user_id: UUID) -> None:
     await _replace_generation(f"{PREFIX}:user:{user_id}:generation")
+
+
+async def get_cached_auth_user(user_id: UUID) -> UserResponse | None:
+    if _client is None:
+        return None
+    try:
+        cached = _text(await _client.get(f"{AUTH_USER_PREFIX}:{user_id}"))
+        if cached is None:
+            return None
+        user = UserResponse.model_validate_json(cached)
+        return user if user.id == user_id and user.is_active else None
+    except (RedisError, RuntimeError, ValidationError, ValueError):
+        return None
+
+
+async def store_auth_user(user: UserResponse) -> None:
+    if _client is None:
+        return
+    try:
+        await _client.set(
+            f"{AUTH_USER_PREFIX}:{user.id}",
+            user.model_dump_json(),
+            ex=AUTH_USER_TTL_SECONDS,
+        )
+    except (RedisError, RuntimeError, TypeError, ValueError):
+        pass
+
+
+async def invalidate_auth_user_cache(user_id: UUID) -> None:
+    if _client is None:
+        return
+    try:
+        await _client.delete(f"{AUTH_USER_PREFIX}:{user_id}")
+    except (RedisError, RuntimeError):
+        pass
 
 
 async def _replace_generation(key: str) -> None:

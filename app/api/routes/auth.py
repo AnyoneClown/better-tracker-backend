@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import CurrentUserDep, SessionDep, authentication_error
+from app.cache import invalidate_auth_user_cache
 from app.core.config import settings
 from app.core.security import (
     DUMMY_PASSWORD_HASH,
@@ -132,6 +133,7 @@ async def login(
     return AccessTokenResponse(
         access_token=access_token,
         expires_in=expires_in,
+        user_id=user.id,
     )
 
 
@@ -220,11 +222,15 @@ async def exchange_google_code(
     if not user.is_active:
         raise authentication_error()
     access_token, expires_in = create_access_token(user.id)
-    return AccessTokenResponse(access_token=access_token, expires_in=expires_in)
+    return AccessTokenResponse(
+        access_token=access_token,
+        expires_in=expires_in,
+        user_id=user.id,
+    )
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_authenticated_user(current_user: CurrentUserDep) -> User:
+async def get_authenticated_user(current_user: CurrentUserDep) -> UserResponse:
     return current_user
 
 
@@ -234,7 +240,16 @@ async def update_authenticated_user(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> User:
-    current_user.locale = payload.locale
+    user = await session.scalar(
+        select(User).where(
+            User.id == current_user.id,
+            User.is_active.is_(True),
+        )
+    )
+    if user is None:
+        raise authentication_error()
+    user.locale = payload.locale
     await session.commit()
-    await session.refresh(current_user)
-    return current_user
+    await session.refresh(user)
+    await invalidate_auth_user_cache(user.id)
+    return user

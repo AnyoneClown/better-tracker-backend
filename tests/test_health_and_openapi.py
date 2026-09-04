@@ -29,6 +29,8 @@ def test_openapi_exposes_each_tracker_domain() -> None:
         "/api/v1/finance/budgets",
         "/api/v1/finance/summary",
         "/api/v1/finance/currencies",
+        "/api/v1/money/workspace",
+        "/api/v1/money/summaries",
         "/api/v1/integrations/monobank/connection",
         "/api/v1/integrations/monobank/sync",
         "/api/v1/integrations/monobank/accounts/{account_id}",
@@ -48,6 +50,7 @@ def test_openapi_exposes_each_tracker_domain() -> None:
     protected_prefixes = (
         "/api/v1/workouts",
         "/api/v1/finance",
+        "/api/v1/money",
         "/api/v1/wealth",
         "/api/v1/health",
         "/api/v1/integrations",

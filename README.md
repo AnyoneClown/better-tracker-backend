@@ -14,8 +14,8 @@ user.
 - FastAPI routes and Pydantic request/response schemas under `app/api` and
   `app/schemas`.
 - SQLAlchemy 2 async ORM models under `app/models`.
-- `asyncpg` through the `sqlalchemy-cockroachdb` dialect, with one async session
-  per request, plus Redis response caching for authenticated tracker reads.
+- `asyncpg` through the `sqlalchemy-cockroachdb` dialect, plus Redis response
+  caching and a 30-second public auth-user snapshot for authenticated reads.
 - Alembic migrations under `alembic`.
 - Argon2 password hashes and signed, expiring JWT access tokens. Passwords and
   tokens are never returned by tracker endpoints or stored in plaintext.
@@ -220,6 +220,10 @@ complete request and response schemas.
   same Better Tracker access token as password login.
 - `GET /api/v1/auth/me` — return the active user represented by a bearer token.
 
+JWT signatures and expiry are checked on every request. Redis may retain the
+last active-user state for up to 30 seconds; profile changes made through this
+API invalidate that snapshot immediately.
+
 All workout, finance, wealth, and health routes require
 `Authorization: Bearer <access_token>`. Requests can only access records owned
 by that token's user; another user's resource identifier returns `404 Not Found`.
@@ -273,6 +277,13 @@ only allow category and summary-exclusion changes; their bank-supplied fields
 are read-only. Users can bulk-delete every imported row for one connected bank
 account; manual rows and other accounts are unaffected, and a later sync can
 import deleted provider rows again.
+
+### Money read models
+
+- `GET /api/v1/money/workspace` — return the Money page's monthly finance,
+  wealth, goals, contributions, currencies, and Monobank data in one response.
+- `GET /api/v1/money/summaries` — return an inclusive range of up to 12 monthly
+  finance summaries in one response.
 
 ### Monobank Personal API
 

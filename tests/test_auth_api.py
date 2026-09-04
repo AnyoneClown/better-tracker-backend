@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator, Callable
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
@@ -140,7 +141,10 @@ async def test_registration_rejects_unknown_fields(
 
 async def test_user_can_login_and_get_current_profile(
     unauthenticated_api_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    warm_auth_cache = AsyncMock()
+    monkeypatch.setattr(auth_routes, "store_auth_user", warm_auth_cache)
     registration = await unauthenticated_api_client.post(
         "/api/v1/auth/register",
         json={"email": " Login.User@Example.COM ", "password": VALID_PASSWORD},
@@ -157,6 +161,9 @@ async def test_user_can_login_and_get_current_profile(
     assert token_body["expires_in"] == 1800
     assert token_body["access_token"]
     assert token_body["user_id"] == registration.json()["id"]
+    assert [call.args[0].id for call in warm_auth_cache.await_args_list] == [
+        UUID(token_body["user_id"])
+    ]
 
     profile = await unauthenticated_api_client.get(
         "/api/v1/auth/me",
@@ -223,6 +230,8 @@ async def test_google_oauth_creates_and_reuses_account(
         )
 
     monkeypatch.setattr(auth_routes, "fetch_google_user_info", fake_user_info)
+    warm_auth_cache = AsyncMock()
+    monkeypatch.setattr(auth_routes, "store_auth_user", warm_auth_cache)
     exchange_payload = {
         "code": "authorization-code",
         "redirect_uri": redirect_uri,
@@ -238,6 +247,10 @@ async def test_google_oauth_creates_and_reuses_account(
     )
     assert first.status_code == second.status_code == 200
     assert first.json()["user_id"] == second.json()["user_id"]
+    assert [call.args[0].id for call in warm_auth_cache.await_args_list] == [
+        UUID(first.json()["user_id"]),
+        UUID(second.json()["user_id"]),
+    ]
 
     first_profile = await unauthenticated_api_client.get(
         "/api/v1/auth/me",

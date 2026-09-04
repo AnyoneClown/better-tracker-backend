@@ -7,6 +7,7 @@ from starlette.requests import Request
 
 from app import cache
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.security import create_access_token
 from app.models.user import User
 from app.schemas.auth import UserResponse
@@ -104,7 +105,11 @@ async def test_auth_user_cache_avoids_db_and_rejects_bad_entries(monkeypatch) ->
     assert session.calls == 1
 
     key = f"{cache.AUTH_USER_PREFIX}:{user.id}"
-    assert redis.expirations[key] == cache.AUTH_USER_TTL_SECONDS == 30
+    assert (
+        redis.expirations[key]
+        == cache.AUTH_USER_TTL_SECONDS
+        == settings.access_token_expire_minutes * 60
+    )
     assert "hashed_password" not in redis.values[key]
 
     cached = UserResponse.model_validate(user)

@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import CurrentUserDep, SessionDep, authentication_error
-from app.cache import invalidate_auth_user_cache
+from app.cache import invalidate_auth_user_cache, store_auth_user
 from app.core.config import settings
 from app.core.security import (
     DUMMY_PASSWORD_HASH,
@@ -130,6 +130,7 @@ async def login(
         raise authentication_error()
 
     access_token, expires_in = create_access_token(user.id)
+    await store_auth_user(UserResponse.model_validate(user))
     return AccessTokenResponse(
         access_token=access_token,
         expires_in=expires_in,
@@ -222,6 +223,7 @@ async def exchange_google_code(
     if not user.is_active:
         raise authentication_error()
     access_token, expires_in = create_access_token(user.id)
+    await store_auth_user(UserResponse.model_validate(user))
     return AccessTokenResponse(
         access_token=access_token,
         expires_in=expires_in,

@@ -16,7 +16,7 @@ from app.schemas.auth import UserResponse
 
 PREFIX = "better-tracker:response-cache:v1"
 AUTH_USER_PREFIX = "better-tracker:auth-user:v1"
-AUTH_USER_TTL_SECONDS = 30
+AUTH_USER_TTL_SECONDS = settings.access_token_expire_minutes * 60
 
 _client = (
     Redis.from_url(

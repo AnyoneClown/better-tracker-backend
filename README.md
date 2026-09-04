@@ -15,7 +15,7 @@ user.
   `app/schemas`.
 - SQLAlchemy 2 async ORM models under `app/models`.
 - `asyncpg` through the `sqlalchemy-cockroachdb` dialect, plus Redis response
-  caching and a 30-second public auth-user snapshot for authenticated reads.
+  caching and a token-lifetime public auth-user snapshot for authenticated reads.
 - Alembic migrations under `alembic`.
 - Argon2 password hashes and signed, expiring JWT access tokens. Passwords and
   tokens are never returned by tracker endpoints or stored in plaintext.
@@ -220,9 +220,10 @@ complete request and response schemas.
   same Better Tracker access token as password login.
 - `GET /api/v1/auth/me` — return the active user represented by a bearer token.
 
-JWT signatures and expiry are checked on every request. Redis may retain the
-last active-user state for up to 30 seconds; profile changes made through this
-API invalidate that snapshot immediately.
+JWT signatures and expiry are checked on every request. Successful password and
+Google logins warm the Redis auth-user snapshot for the configured token lifetime
+(30 minutes by default); profile changes made through this API invalidate it.
+Out-of-band account changes can remain stale until that snapshot expires.
 
 All workout, finance, wealth, and health routes require
 `Authorization: Bearer <access_token>`. Requests can only access records owned

@@ -1,7 +1,8 @@
+import re
 from functools import lru_cache
 
 from cryptography.fernet import Fernet
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEVELOPMENT_JWT_SECRET = "development-only-secret-change-before-running-in-production"
@@ -33,6 +34,23 @@ class Settings(BaseSettings):
     monobank_token_encryption_key: SecretStr = SecretStr(
         DEVELOPMENT_MONOBANK_ENCRYPTION_KEY
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_cockroach_database_url(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        normalized = re.sub(
+            r"^postgres(?:ql)?://",
+            "cockroachdb+asyncpg://",
+            value,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        # Cockroach Cloud emits libpq's `sslmode` parameter. SQLAlchemy passes
+        # query options directly to asyncpg, whose equivalent option is `ssl`.
+        return re.sub(r"([?&])sslmode=", r"\1ssl=", normalized)
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":

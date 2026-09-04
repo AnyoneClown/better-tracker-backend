@@ -48,7 +48,7 @@ migrations, and starts the API. Once the `migrate` service has completed:
 - Swagger UI: <http://localhost:8000/docs>
 - OpenAPI JSON: <http://localhost:8000/openapi.json>
 - CockroachDB SQL: `localhost:26257`
-- CockroachDB console: <http://localhost:8080>
+- CockroachDB console: <http://localhost:18080>
 
 The API container has a readiness healthcheck, so scripts can wait for the whole
 stack:
@@ -63,6 +63,12 @@ Useful lifecycle commands:
 docker compose logs -f api migrate
 docker compose down
 ```
+
+On this Raspberry Pi, the API remains private on `127.0.0.1:8000`; the
+same-host frontend proxies browser requests to it. The frontend is available to
+the LAN at <http://192.168.0.103:43127>. The CockroachDB SQL and admin ports are
+also loopback-only. Override the non-conflicting admin port when needed with
+`COCKROACH_HTTP_PORT`.
 
 The named `cockroach-data` volume survives `docker compose down`. Running
 `docker compose down -v` also deletes the local database volume and all tracker
@@ -138,6 +144,26 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 The default `DATABASE_URL` in `.env.example` targets this local node. Stop it
 with `cockroach quit --insecure --host=localhost:26257` when finished.
+
+## Production database
+
+Local development uses only the CockroachDB service in `compose.yaml`. A
+deployment uses the cloud connection from the ignored `.env.production` file
+and intentionally starts no local database:
+
+```bash
+docker compose -f compose.production.yaml up -d --build --wait
+```
+
+The Render deployment follows the same separation: set its secret
+`DATABASE_URL` to the standard `postgresql://...?sslmode=verify-full` URL from
+Cockroach Cloud and keep `PGSSLROOTCERT=/etc/ssl/certs/ca-certificates.crt`.
+The application normalizes that provider URL for its async driver. Never
+commit either `.env` file.
+
+The production container applies idempotent migrations before starting the API.
+Local development applies the same migration history to its own isolated
+database.
 
 ## Configuration
 

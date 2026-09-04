@@ -65,3 +65,18 @@ def test_settings_require_a_strong_non_default_production_secret() -> None:
         monobank_token_encryption_key=Fernet.generate_key().decode("ascii"),
     )
     assert production_settings.environment == "production"
+
+
+def test_settings_normalize_cockroach_cloud_database_url() -> None:
+    cloud_settings = Settings(
+        _env_file=None,
+        database_url=(
+            "postgresql://app:password@cluster.example:26257/tracker"
+            "?sslmode=verify-full"
+        ),
+    )
+
+    assert cloud_settings.database_url == (
+        "cockroachdb+asyncpg://app:password@cluster.example:26257/tracker"
+        "?ssl=verify-full"
+    )
